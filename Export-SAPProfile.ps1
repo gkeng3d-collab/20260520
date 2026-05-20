@@ -2,7 +2,7 @@
 # ส่งออก SAP GUI Profile ไปยัง folder ที่กำหนด
 
 param(
-    [string]$Destination = "$env:USERPROFILE\Desktop\SAP_Profile_Backup"
+    [string]$Destination = "D:\SAP_Profile_Backup"
 )
 
 $sapLandscapePath = "$env:APPDATA\SAP\Common\SAPUILandscape.xml"
