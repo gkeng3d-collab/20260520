@@ -53,6 +53,30 @@ claude mcp add tradingview -- npx -y tradingview-mcp-server@latest
 
 ---
 
+## ⚡ คำสั่งพร้อมรัน (ทดสอบบนเครื่องตัวเอง)
+
+หลัง `npm install -g tradingview-mcp-server` แล้ว รันใน terminal ได้เลย:
+
+```bash
+# หุ้นไทยที่ราคาเพิ่งตัดขึ้นเหนือ EMA 200 วันนี้ เรียงตามวอลุ่ม
+tradingview-cli screen stocks \
+  --markets thailand \
+  --filters '[{"field":"close","operator":"crosses_above","value":"EMA200"}]' \
+  --columns name --columns close --columns change --columns volume --columns RSI \
+  --sort-by volume --sort-order desc --limit 25 -f table
+```
+
+> หมายเหตุจากการทดสอบ: `tradingview-cli fields --asset-type stock` คืน MA แบบ curated
+> มาแค่ `SMA50`, `SMA200`, `EMA10` แต่ scanner API จริงรับ field `EMA200` ได้ —
+> ถ้าเคส `EMA200` คืน error/ว่าง ให้สลับไปใช้ `SMA200` (Simple MA 200) เป็น fallback:
+>
+> ```bash
+> tradingview-cli screen stocks --markets thailand \
+>   --filters '[{"field":"close","operator":"crosses_above","value":"SMA200"}]' \
+>   --columns name --columns close --columns change --columns volume \
+>   --sort-by volume --sort-order desc --limit 25 -f table
+> ```
+
 ## วิธีหาหุ้นไทยที่ "เพิ่งเบรก EMA 200"
 
 ใน Claude Code (หลังเชื่อม MCP แล้ว) พิมพ์ prompt ประมาณนี้ได้เลย:
@@ -102,3 +126,4 @@ Operators ที่เกี่ยวข้อง:
 | connect ไม่ติด / timeout | เช็ค `node -v` ≥ 18, เช็คเน็ต, ลอง `npx -y tradingview-mcp-server@latest` ใน terminal ตรงๆ |
 | ไม่มีผลลัพธ์หุ้นไทย | ชื่อ field ผิด — รัน `list_fields` / `get_market_metainfo` (market=thailand) เพื่อดูชื่อจริง |
 | โดน rate limit | ปรับ `RATE_LIMIT_RPM` ใน `.mcp.json` ให้ต่ำลง หรือเพิ่ม `CACHE_TTL_SECONDS` |
+| **`403 Forbidden`** | TradingView บล็อก IP ของ cloud/datacenter (เช่นรันบน Claude Code เวอร์ชัน web/เซิร์ฟเวอร์คลาวด์) — **รันบนเครื่องตัวเอง (residential IP) จะผ่าน** ไม่ใช่ปัญหา config |
