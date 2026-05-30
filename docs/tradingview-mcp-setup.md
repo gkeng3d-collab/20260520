@@ -77,6 +77,37 @@ tradingview-cli screen stocks \
 >   --sort-by volume --sort-order desc --limit 25 -f table
 > ```
 
+## 🎯 สูตร "Quality Breakout" (กรองสัญญาณหลอก)
+
+เบรก EMA 200 + ยืนยันด้วยโมเมนตัมและสภาพคล่อง — ลดหุ้นเบรกหลอก/เด้งสั้น:
+
+```bash
+tradingview-cli screen stocks \
+  --markets thailand \
+  --filters '[
+    {"field":"close","operator":"crosses_above","value":"EMA200"},
+    {"field":"RSI","operator":"greater","value":50},
+    {"field":"market_cap_basic","operator":"greater","value":3000000000},
+    {"field":"average_volume_90d_calc","operator":"greater","value":1000000}
+  ]' \
+  --columns name --columns close --columns change --columns RSI \
+  --columns volume --columns average_volume_90d_calc --columns market_cap_basic \
+  --sort-by volume --sort-order desc --limit 25 -f table
+```
+
+เกณฑ์ที่ใส่ (ปรับเลขได้ตามสไตล์):
+
+| เงื่อนไข | ค่า | เหตุผล |
+|----------|-----|--------|
+| `close crosses_above EMA200` | — | ราคาเพิ่งเบรกขึ้นเหนือเส้น |
+| `RSI > 50` | 50 | โมเมนตัมเป็นบวก ยืนยันแรงซื้อ |
+| `market_cap_basic > 3,000,000,000` | 3 พันล้านบาท | ตัดหุ้นเล็ก/ปั่นออก |
+| `average_volume_90d_calc > 1,000,000` | 1 ล้านหุ้น/วัน | มีสภาพคล่องพอเข้าออก |
+
+> ปรับจูนได้: เน้น growth → เพิ่ม `{"field":"change","operator":"greater","value":2}` (วันนี้ +2% ขึ้น);
+> เน้นปลอดภัย → ดัน `market_cap_basic` เป็น `10000000000` (หมื่นล้าน);
+> อยากได้ตัวเพิ่งเริ่ม → จำกัด `{"field":"RSI","operator":"in_range","value":[50,65]}` กัน overbought
+
 ## วิธีหาหุ้นไทยที่ "เพิ่งเบรก EMA 200"
 
 ใน Claude Code (หลังเชื่อม MCP แล้ว) พิมพ์ prompt ประมาณนี้ได้เลย:
