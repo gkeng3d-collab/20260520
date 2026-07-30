@@ -74,10 +74,12 @@
           <select id="fetchRange"><option value="2y">2 ปี</option><option value="3y" selected>3 ปี</option><option value="5y">5 ปี</option></select>
         </div>
       </div>
-      <div>
-        <label>หรืออัปโหลดไฟล์ CSV (จาก fetch_yahoo.py / โบรกเกอร์)</label>
-        <input type="file" id="file" accept=".csv,.txt">
-        <div class="note" style="margin-top:6px">รูปแบบ: คอลัมน์ <code>date</code> (มี/ไม่มีก็ได้) ตามด้วยราคาปิดรายสินทรัพย์ เรียงเก่า→ใหม่</div>
+      <div id="dropZone">
+        <label>หรืออัปโหลดไฟล์ CSV — เลือกได้หลายไฟล์พร้อมกัน / ลากมาวางตรงนี้</label>
+        <input type="file" id="file" accept=".csv,.txt" multiple>
+        <div class="note" style="margin-top:6px">
+          รับ 2 แบบ: <b>ไฟล์รวม</b> (คอลัมน์ <code>date</code> + ราคาปิดรายสินทรัพย์ จาก fetch_yahoo.py/โบรกเกอร์)
+          หรือ <b>ไฟล์ History รายตัวจากเว็บ Yahoo</b> หลายไฟล์ (BLC.BK.csv, SISB.BK.csv, ...) เดี๋ยวรวมให้เอง</div>
       </div>
       <div>
         <label>หรือวางข้อความ CSV ตรงนี้</label>
@@ -86,6 +88,19 @@
       </div>
     </div>
     <div id="dataStatus" class="status">ยังไม่มีข้อมูล — ใส่ข้อมูลราคาก่อน แล้วส่วนล่างจะปลดล็อกให้กดคำนวณ</div>
+    <details style="margin-top:10px">
+      <summary style="cursor:pointer;font-size:.85rem;color:var(--accent)">ปุ่มดึงข้อมูลใช้ไม่ได้ (403/CORS)? — 2 ทางแก้ใน 1 นาที</summary>
+      <div class="note" style="margin-top:8px;line-height:1.7">
+        <b>ทาง 1 · ดาวน์โหลดจากหน้าเว็บ Yahoo (ไม่ต้องใช้โปรแกรมอะไรเลย)</b><br>
+        เปิด finance.yahoo.com → ค้นหุ้นเช่น <code>BLC.BK</code> → แท็บ <b>Historical Data</b> →
+        เลือกช่วง 3Y → กด <b>Download</b> จะได้ไฟล์เช่น <code>BLC.BK.csv</code> —
+        ทำครบทุกตัวแล้วเลือกอัปโหลด<b>ทุกไฟล์พร้อมกัน</b>ในช่องด้านบน โปรแกรมรวม + เรียงวันที่ให้อัตโนมัติ<br><br>
+        <b>ทาง 2 · รันสคริปต์บนเครื่อง (ครั้งเดียวได้ไฟล์เดียวครบทุกตัว)</b> — ต้องมี Python:<br>
+        <code id="cmdFetch">python fetch_yahoo.py BLC.BK SISB.BK SPALI.BK AIT.BK DCC.BK LHHOTEL.BK SECURE.BK INETREIT.BK PSL.BK VAYU1.BK --out prices.csv</code>
+        <button class="ghost" style="padding:2px 10px;font-size:.75rem" onclick="navigator.clipboard.writeText(document.getElementById('cmdFetch').textContent)">คัดลอก</button><br>
+        แล้วอัปโหลด <code>prices.csv</code> ที่ได้ (สคริปต์อยู่ในโฟลเดอร์เดียวกับไฟล์นี้ใน repo)
+      </div>
+    </details>
   </div>
 
   <!-- ② holdings -->
@@ -193,6 +208,48 @@ function parsePrices(text){
     P.push(row); last = row;
   }
   if(P.length < 3) throw "ต้องมีราคาอย่างน้อย 3 แถวเพื่อคำนวณผลตอบแทน";
+  return {names, dates, P};
+}
+
+// per-ticker "Historical Data" CSV from finance.yahoo.com (Date,Open,...,Close,Adj Close,...)
+function isYahooHistory(text){
+  const head = text.slice(0,300).split(/\r?\n/)[0].toLowerCase();
+  return head.includes("date") && head.includes("open") && head.includes("close");
+}
+function parseYahooHistory(text){
+  const lines = text.replace(/^﻿/,"").split(/\r?\n/).filter(l=>l.trim()!=="");
+  const head = lines[0].toLowerCase().split(",").map(s=>s.trim());
+  const di = head.indexOf("date");
+  let ci = head.findIndex(h=> h.replace(/[\s_]/g,"")==="adjclose");
+  if(ci<0) ci = head.indexOf("close");
+  if(di<0||ci<0) throw "ไม่ใช่ไฟล์ History ของ Yahoo (ต้องมีคอลัมน์ Date และ Close)";
+  const map = new Map();
+  for(let i=1;i<lines.length;i++){
+    const c = lines[i].split(",");
+    const v = Number(c[ci]);
+    if(c[di] && isFinite(v) && v>0) map.set(c[di].trim(), v);
+  }
+  if(map.size<3) throw "ข้อมูลในไฟล์น้อยเกินไป";
+  return map;
+}
+// merge [{name, map(date->price)}] on the union of dates from the latest common start
+function combineSeriesMaps(entries){
+  const names = entries.map(e=>e.name);
+  if(new Set(names.map(n=>n.toLowerCase())).size !== names.length) throw "มีชื่อสินทรัพย์ซ้ำกัน";
+  const start = entries.map(e=> [...e.map.keys()].sort()[0]).sort().reverse()[0];
+  const dates = [...new Set([].concat(...entries.map(e=>[...e.map.keys()])))]
+                .filter(d=> d>=start).sort();
+  const lastVal = {};
+  entries.forEach(e=>{
+    const prior = [...e.map.keys()].filter(d=> d<=start).sort();
+    lastVal[e.name] = e.map.get(prior[prior.length-1]);
+  });
+  const P = dates.map(d=> entries.map(e=>{
+    const v = e.map.get(d);
+    if(v!=null) lastVal[e.name]=v;
+    return lastVal[e.name];
+  }));
+  if(P.length<3) throw "ช่วงข้อมูลที่ทุกตัวมีร่วมกันสั้นเกินไป";
   return {names, dates, P};
 }
 
@@ -433,18 +490,38 @@ function dataError(e){
 }
 
 $("btnPaste").onclick = ()=>{ try{ setData(parsePrices($("paste").value), "ใช้ข้อมูลที่วาง"); }catch(e){ dataError(e);} };
-$("file").addEventListener("change", ev=>{
-  const f = ev.target.files[0]; if(!f) return;
-  const r = new FileReader();
-  r.onload = ()=>{ try{ setData(parsePrices(r.result), "ไฟล์ "+f.name); }catch(e){ dataError(e);} };
-  r.readAsText(f);
-});
+
+function handleFiles(files){
+  if(!files.length) return;
+  Promise.all(files.map(f=> f.text().then(text=>({fname:f.name, text}))))
+  .then(list=>{
+    const yh = list.filter(x=> isYahooHistory(x.text));
+    if(yh.length === list.length){           // per-ticker Yahoo history file(s)
+      const entries = yh.map(x=>({
+        name: x.fname.replace(/\.(csv|txt)$/i,"").replace(/\.BK$/i,"").replace(/\s*\(\d+\)$/,"").toUpperCase(),
+        map: parseYahooHistory(x.text)}));
+      if(entries.length < 2) throw "ต้องมีอย่างน้อย 2 สินทรัพย์ — เลือกไฟล์ History ของทุกตัวพร้อมกัน";
+      setData(combineSeriesMaps(entries), `รวมไฟล์ Yahoo History ${entries.length} ตัว`);
+    } else if(list.length === 1){            // one wide-format file
+      setData(parsePrices(list[0].text), "ไฟล์ "+list[0].fname);
+    } else {
+      throw "อัปโหลดหลายไฟล์ได้เฉพาะไฟล์ History รายตัวจาก Yahoo — ไฟล์แบบตารางรวมให้เลือกไฟล์เดียว";
+    }
+  })
+  .catch(e=> dataError(e));
+}
+$("file").addEventListener("change", ev=>{ handleFiles([...ev.target.files]); ev.target.value=""; });
+const dz = $("dropZone");
+["dragover","dragenter"].forEach(t=> dz.addEventListener(t, e=> e.preventDefault()));
+dz.addEventListener("drop", e=>{ e.preventDefault(); handleFiles([...e.dataTransfer.files]); });
 
 /* Yahoo fetch with CORS fallbacks */
 async function fetchYahoo(sym, range){
-  const base = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=${range}&interval=1d&events=div%2Csplit`;
-  const tries = [base,
+  const q = h => `https://${h}/v8/finance/chart/${encodeURIComponent(sym)}?range=${range}&interval=1d&events=div%2Csplit`;
+  const base = q("query1.finance.yahoo.com");
+  const tries = [base, q("query2.finance.yahoo.com"),
     "https://api.allorigins.win/raw?url="+encodeURIComponent(base),
+    "https://api.codetabs.com/v1/proxy?quest="+encodeURIComponent(base),
     "https://corsproxy.io/?url="+encodeURIComponent(base)];
   let lastErr = null;
   for(const url of tries){
@@ -480,22 +557,8 @@ $("btnFetch").onclick = async ()=>{
       $("dataStatus").className = "status";
       series.set(s.replace(/\.BK$/i,""), await fetchYahoo(s, $("fetchRange").value));
     }
-    const names = [...series.keys()];
-    const start = names.map(n=> [...series.get(n).keys()].sort()[0])
-                       .sort().reverse()[0];
-    const allDates = [...new Set([].concat(...names.map(n=>[...series.get(n).keys()])))]
-                     .filter(d=> d>=start).sort();
-    const lastVal = {};
-    names.forEach(n=>{
-      const prior = [...series.get(n).keys()].filter(d=> d<=start).sort();
-      lastVal[n] = series.get(n).get(prior[prior.length-1]);
-    });
-    const P = allDates.map(d=> names.map(n=>{
-      const v = series.get(n).get(d);
-      if(v!=null) lastVal[n]=v;
-      return lastVal[n];
-    }));
-    setData({names, dates: allDates, P}, "ดึงจาก Yahoo สำเร็จ");
+    setData(combineSeriesMaps([...series].map(([name,map])=>({name,map}))),
+            "ดึงจาก Yahoo สำเร็จ");
   }catch(e){
     dataError(e+"\nเบราว์เซอร์อาจโดน CORS บล็อก — ใช้วิธีอัปโหลด/วางไฟล์จาก fetch_yahoo.py แทน");
   }finally{ $("btnFetch").disabled = false; }
