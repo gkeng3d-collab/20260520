@@ -139,6 +139,21 @@ python mpt.py rebalance sample_prices.csv --holdings sample_holdings.csv \
 | `--target 0.10` | objective `target-return` | ผลตอบแทนเป้าหมายต่อปี |
 | `--cash 100000` | rebalance | เงินเติมเข้า (ติดลบ = ถอนออก) |
 | `--min-trade 500` | rebalance | ข้ามรายการซื้อขายที่มูลค่าต่ำกว่านี้ |
+| `--lot 100` | rebalance | ปัดจำนวนหุ้นซื้อ/ขายเป็นทวีคูณของ board lot (หุ้นไทย = 100) |
+
+## ดึงราคาจริงจาก Yahoo Finance
+
+`fetch_yahoo.py` (ใช้แค่ Python stdlib) ดึงราคาปิดปรับปันผลย้อนหลังมาเป็น CSV
+พร้อมใช้กับ `mpt.py` ทันที — หุ้นไทยใช้ ticker ต่อท้าย `.BK`:
+
+```bash
+python fetch_yahoo.py SPALI.BK DCC.BK LHHOTEL.BK --out prices.csv
+# หรือดึงตามรายชื่อในไฟล์พอร์ต
+python fetch_yahoo.py --holdings my-port/holdings.csv --suffix .BK --out my-port/prices.csv
+```
+
+(ต้องรันบนเครื่องที่ออกอินเทอร์เน็ตถึง Yahoo ได้ — sandbox ของ Claude Code
+บนเว็บมักบล็อก จึงเตรียมสคริปต์นี้ไว้ให้รันฝั่งผู้ใช้)
 
 ## ข้อมูลตัวอย่าง
 

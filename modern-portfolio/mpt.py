@@ -544,7 +544,14 @@ def cmd_rebalance(args):
 
     tgt_value = w_target * total_target
     trade_value = tgt_value - cur_value
+    trade_units = trade_value / last
+    if args.lot > 0:
+        trade_units = np.round(trade_units / args.lot) * args.lot
+        trade_units = np.maximum(trade_units, -cur_units)  # cannot sell more than held
+        trade_value = trade_units * last
     skip = np.abs(trade_value) < args.min_trade
+    trade_units = np.where(skip, 0.0, trade_units)
+    trade_value = np.where(skip, 0.0, trade_value)
     date_txt = f" @ {dates[-1]}" if dates else ""
 
     print(f"== Rebalance plan (target from {source}) ==")
@@ -555,24 +562,34 @@ def cmd_rebalance(args):
 
     rows = []
     for j, n in enumerate(names):
-        action = "-" if skip[j] or abs(trade_value[j]) < 0.005 else (
+        action = "-" if abs(trade_value[j]) < 0.005 else (
             "BUY" if trade_value[j] > 0 else "SELL")
         rows.append((n, f"{last[j]:,.2f}", f"{cur_units[j]:,.4f}", f"{cur_value[j]:,.2f}",
                      pct(cur_value[j] / total_now) if total_now > 0 else "-",
                      pct(w_target[j]), f"{tgt_value[j]:,.2f}", action,
-                     "0.00" if skip[j] else f"{trade_value[j]:+,.2f}",
-                     "0.0000" if skip[j] else f"{trade_value[j] / last[j]:+,.4f}"))
+                     f"{trade_value[j]:+,.2f}" if action != "-" else "0.00",
+                     f"{trade_units[j]:+,.4f}" if action != "-" else "0"))
     print(fmt_table(["Asset", "Price", "Units", "Value", "Now%", "Target%",
                      "TargetValue", "Action", "Trade(Value)", "Trade(Units)"], rows))
     if skip.any():
         print(f"\n(trades below --min-trade {args.min_trade:g} are left as-is)")
+    value_after = cur_value + trade_value
+    residual = total_target - float(value_after.sum())
+    if residual >= 0.005:
+        print(f"Cash left unallocated after trades: {residual:,.2f}")
+    elif residual <= -0.005:
+        print(f"Rounded trades need {-residual:,.2f} extra cash; trim one BUY lot "
+              f"or add that amount")
 
     print()
     if total_now > 0:
         print_portfolio("Portfolio BEFORE (current weights)", cur_value / total_now,
                         names, mu, cov, rf)
-    print_portfolio("Portfolio AFTER (target weights)", w_target, names, mu, cov, rf)
-    print("Units are fractional; round to your broker's lot size (e.g. 100 for SET stocks).")
+    if value_after.sum() > 0:
+        print_portfolio("Portfolio AFTER (post-trade weights)", value_after / value_after.sum(),
+                        names, mu, cov, rf)
+    if not args.lot:
+        print("Units are fractional; use --lot 100 to round to SET board lots.")
 
 
 # ---------------------------------------------------------------------------
@@ -631,6 +648,8 @@ def build_parser():
                    help="extra cash to invest (negative = withdraw)")
     s.add_argument("--min-trade", type=float, default=0.0,
                    help="skip trades smaller than this value")
+    s.add_argument("--lot", type=float, default=0.0,
+                   help="round trade units to this lot size (SET board lot: 100)")
     return p
 
 
