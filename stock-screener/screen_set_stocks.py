@@ -6,10 +6,14 @@
 วิธีใช้:
     python3 screen_set_stocks.py <path ไฟล์ listSET_YYYYMMDD.xlsx> [ไฟล์ผลลัพธ์.xlsx]
 
-กลยุทธ์ 3 แบบ:
+กลยุทธ์ 4 แบบ:
   A) Momentum  — เทรนด์ขาขึ้นแข็งแรง โมเมนตัมดี ยังไม่ overbought
   B) Breakout  — เพิ่งทะลุฐาน/แนวต้าน หรือเพิ่งเกิดสัญญาณซื้อใหม่ พร้อมวอลุ่มยืนยัน
   C) Pullback  — ขาขึ้นใหญ่ (รายสัปดาห์) ยังดี แต่รายวันย่อลงมาใกล้แนวรับ EMA26
+  D) MCDX      — แรงซื้อรายใหญ่ (MCDX แถบแดง) สูงและกำลังเพิ่มขึ้น
+
+พร้อมชีท "ย้ายโซน RSI" จับหุ้นที่เพิ่งเปลี่ยนโซน RSI วัน/สัปดาห์ ทั้งฝั่งฟื้นตัวและฝั่งอ่อนแรง
+(zone1 อ่อนทั้งวัน+สัปดาห์ | zone2 วันเด้ง สัปดาห์ยังอ่อน | zone3 แข็งทั้งคู่ | zone4 ย่อในขาขึ้นใหญ่)
 
 ผลลัพธ์: ไฟล์ Excel มีชีทเกณฑ์ + รายชื่อหุ้นแต่ละกลยุทธ์ เรียงตามคะแนนรวม
 หมายเหตุ: เป็นการคัดกรองทางเทคนิคจากข้อมูลในไฟล์เท่านั้น ไม่ใช่คำแนะนำการลงทุน
@@ -46,6 +50,7 @@ def load_universe(df: pd.DataFrame) -> pd.DataFrame:
     u['stop_2ATR'] = u['close_minus_2ATR']
     u['stop_dist%'] = (u['close'] - u['stop_2ATR']) / u['close'] * 100
     u['EMA26_price'] = (u['close'] / (1 + u['EMA26%C'] / 100)).round(2)
+    u['dMCDX5'] = u['MCDX_red'] - u['MCDX_red-5']   # แรงรายใหญ่เปลี่ยนแปลงใน 5 แท่ง
     return u
 
 
@@ -101,6 +106,19 @@ def setup_pullback(u: pd.DataFrame) -> pd.Series:
     )
 
 
+def setup_mcdx(u: pd.DataFrame) -> pd.Series:
+    """แรงซื้อรายใหญ่ (MCDX แถบแดง) สูงและกำลังเพิ่มขึ้น"""
+    return (
+        (u['MCDX_red'] >= 10)      # ระดับควอร์ไทล์บนของ universe = เจ้าเข้าชัดเจน
+        & (u['dMCDX5'] > 0)        # และแรงยังเพิ่มขึ้นเทียบ 5 แท่งก่อน
+        & (u['ret_1d'] > -2)       # ไม่ใช่วันที่โดนทุบแรง
+    )
+
+
+BULL_ZONE_MOVES = ['zone1 -> zone2', 'zone2 -> zone3', 'zone1 -> zone3', 'zone4 -> zone3']
+BEAR_ZONE_MOVES = ['zone3 -> zone1', 'zone4 -> zone1', 'zone3 -> zone4', 'zone2 -> zone1']
+
+
 def composite_score(u: pd.DataFrame) -> pd.Series:
     s = 0.25 * u['SCORE'].fillna(0)                       # คะแนน 8 เงื่อนไขจากไฟล์ (0-100)
     s += 0.20 * u['RS_rank_20d'].fillna(0)                # ความแข็งเทียบตลาด
@@ -131,6 +149,10 @@ def warnings_col(u: pd.DataFrame) -> pd.Series:
             msgs.append('RSI divergence ขาลง')
         if r['beta'] > 1.5:
             msgs.append(f"beta สูง {r['beta']:.1f}")
+        if r['dMCDX5'] <= -8:
+            msgs.append('แรงรายใหญ่แผ่วลง')
+        if r['RSIzoneMove'] in BEAR_ZONE_MOVES:
+            msgs.append('โซน RSI เพิ่งอ่อนลง')
         out.append(' | '.join(msgs))
     return pd.Series(out, index=u.index)
 
@@ -138,6 +160,7 @@ def warnings_col(u: pd.DataFrame) -> pd.Series:
 # ---------- ส่วนสร้างรายงาน Excel ----------
 HDR = ['หุ้น', 'กลยุทธ์', 'ราคาปิด', 'คะแนนรวม', 'SCORE ไฟล์', 'RSI วัน', 'RSI สัปดาห์', 'ADX',
        'RS เทียบตลาด (pct)', 'ผลตอบแทน 20 วัน %', 'วอลุ่ม/เฉลี่ย 25 วัน (เท่า)',
+       'MCDX แดง (แรงรายใหญ่)', 'ΔMCDX 5 แท่ง', 'โซน RSI', 'ย้ายโซน',
        'แนวรับ EMA26', 'จุดตัดขาดทุน (2ATR)', 'ระยะถึงจุดตัด %', 'ATR ต่อวัน %',
        'มูลค่าซื้อขายเฉลี่ย 25 วัน (ลบ.)', 'มูลค่าตลาด (พันลบ.)', 'PE', 'ปันผล %',
        'กลุ่มธุรกิจ', 'คำเตือน']
@@ -147,19 +170,23 @@ ARIAL = 'Arial'
 def _row_of(r):
     pe = round(r['PE'], 1) if pd.notna(r['PE']) else None
     dy = round(r['dividendYield'] * 100, 2) if pd.notna(r['dividendYield']) else None
+    zmove = '' if r['RSIzoneMove'] == 'Not move' else r['RSIzoneMove']
     return [r['ticker'], r['setups'].strip(), r['close'], r['composite'], r['SCORE'],
             round(r['RSI14'], 1), round(r['RSI14W'], 1), round(r['ADX'], 1),
             round(r['RS_rank_20d'], 1), round(r['ret_20d'], 2), round(r['vol_ratio'], 2),
+            round(r['MCDX_red'], 1), round(r['dMCDX5'], 1), r['RSIzone'], zmove,
             r['EMA26_price'], round(r['stop_2ATR'], 2), round(r['stop_dist%'], 2),
             round(r['ATR%'], 2), round(r['ValMA25_M'], 1), round(r['Mcap_B'], 1),
             pe, dy, r['sector'], r['คำเตือน']]
 
 
-def _write_sheet(ws, rows: pd.DataFrame):
+def _write_sheet(ws, rows: pd.DataFrame, zone_colors: bool = False):
     th_font = Font(name=ARIAL, bold=True, color='FFFFFF', size=10)
     th_fill = PatternFill('solid', fgColor='1F4E79')
     cell_font = Font(name=ARIAL, size=10)
     warn_fill = PatternFill('solid', fgColor='FFF2CC')
+    bull_fill = PatternFill('solid', fgColor='E2EFDA')
+    bear_fill = PatternFill('solid', fgColor='FBE0DC')
     thin = Side(style='thin', color='D9D9D9')
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
@@ -174,10 +201,17 @@ def _write_sheet(ws, rows: pd.DataFrame):
             c.font, c.border = cell_font, border
             if isinstance(v, float):
                 c.number_format = '#,##0.00'
-        if r['คำเตือน']:
+        fill = None
+        if zone_colors and r['RSIzoneMove'] in BULL_ZONE_MOVES:
+            fill = bull_fill
+        elif zone_colors and r['RSIzoneMove'] in BEAR_ZONE_MOVES:
+            fill = bear_fill
+        elif r['คำเตือน']:
+            fill = warn_fill
+        if fill is not None:
             for j in range(1, len(HDR) + 1):
-                ws.cell(i, j).fill = warn_fill
-    widths = [8, 22, 9, 9, 9, 8, 9, 8, 10, 10, 11, 10, 11, 9, 8, 12, 10, 7, 8, 22, 34]
+                ws.cell(i, j).fill = fill
+    widths = [8, 22, 9, 9, 9, 8, 9, 8, 10, 10, 11, 10, 9, 8, 14, 10, 11, 9, 8, 12, 10, 7, 8, 22, 34]
     for j, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(j)].width = w
     ws.row_dimensions[1].height = 42
@@ -189,7 +223,7 @@ def build_report(u: pd.DataFrame, out_path: str, asof: str, set_close: float, se
     ws = wb.active
     ws.title = 'อ่านก่อน (เกณฑ์)'
     counts = {k: int(u['setups'].str.contains(k).sum())
-              for k in ['A-Momentum', 'B-Breakout', 'C-Pullback']}
+              for k in ['A-Momentum', 'B-Breakout', 'C-Pullback', 'D-MCDX']}
     info = [
         ('รายงานคัดกรองหุ้น SET สำหรับเทรด', ''),
         ('ข้อมูล ณ วันที่', asof),
@@ -207,9 +241,22 @@ def build_report(u: pd.DataFrame, out_path: str, asof: str, set_close: float, se
         (f"C-Pullback ({counts['C-Pullback']} ตัว)",
          'ขาขึ้นรายสัปดาห์ยังแข็ง (RSI สัปดาห์ >50) แต่รายวันย่อลงมาใกล้ EMA26 (-6% ถึง +3%), '
          'ราคายังเหนือ MA60/MA100, ผลตอบแทน 60 วันเป็นบวก'),
+        (f"D-MCDX เจ้าเก็บของ ({counts['D-MCDX']} ตัว)",
+         'MCDX แถบแดง (ประมาณแรงซื้อรายใหญ่/banker) ≥ 10 และเพิ่มขึ้นเทียบ 5 แท่งก่อน + วันล่าสุดไม่โดนทุบแรง '
+         '— เรียงตามแรง MCDX | ระวังตัวที่ราคายืดไกลเส้นค่าเฉลี่ยแล้ว อย่าไล่ราคา รอย่อค่อยเข้า'),
         ('คะแนนรวม (composite)',
          'SCORE จากไฟล์ 25% + RS rank 20/60 วัน 30% + ADX 10 + RSI สัปดาห์ 5 + MACD เร่งขึ้น 5 '
          '+ วอลุ่มเข้า 10 + แรงซื้อรายใหญ่ MCDX 10 − โทษ divergence/ยืดตัว'),
+        ('', ''),
+        ('โซน RSI (RSIzone)',
+         'zone1 = RSI วัน<50 และสัปดาห์<50 (อ่อนทั้งคู่) | zone2 = วัน>50 สัปดาห์<50 (เด้งระยะสั้น) | '
+         'zone3 = >50 ทั้งคู่ (แข็งสุด) | zone4 = วัน<50 สัปดาห์>50 (ย่อในขาขึ้นใหญ่ — โซนตั้งรับ)'),
+        ('ชีท "ย้ายโซน RSI"',
+         'หุ้นที่โซนเพิ่งเปลี่ยนในแท่งล่าสุด — แถวเขียว = ย้ายขึ้น (ฟื้นตัว เช่น zone1→2, zone2→3, zone4→3) '
+         '| แถวแดง = ย้ายลง (อ่อนแรง เช่น zone3→1, zone3→4) ใช้เตือนทั้งหาจังหวะเข้าและระวังตัวที่ถืออยู่'),
+        ('MCDX ในตาราง',
+         'คอลัมน์ "MCDX แดง" = แรงรายใหญ่ล่าสุด (ยิ่งสูงยิ่งเข้าเยอะ, ≥10 = ชัดเจน) | "ΔMCDX 5 แท่ง" = '
+         'เปลี่ยนแปลง 5 วัน บวก = กำลังเก็บเพิ่ม ลบมาก (≤ -8) = แผ่วลง มีธงเตือนให้'),
         ('', ''),
         ('การใช้งาน',
          'จุดตัดขาดทุนอ้างอิง 2×ATR ใต้ราคาปิด หรือใต้แนวรับ EMA26 — เลือกอันที่ตื้นกว่าตามสไตล์ | '
@@ -233,6 +280,12 @@ def build_report(u: pd.DataFrame, out_path: str, asof: str, set_close: float, se
     for name in ['A-Momentum', 'B-Breakout', 'C-Pullback']:
         sub = u[u['setups'].str.contains(name)].sort_values('composite', ascending=False)
         _write_sheet(wb.create_sheet(name), sub)
+    dsub = u[u['setups'].str.contains('D-MCDX')].sort_values('MCDX_red', ascending=False)
+    _write_sheet(wb.create_sheet('D-MCDX เจ้าเก็บของ'), dsub)
+    zmoves = u[u['RSIzoneMove'].isin(BULL_ZONE_MOVES + BEAR_ZONE_MOVES)].copy()
+    zmoves['_dir'] = np.where(zmoves['RSIzoneMove'].isin(BULL_ZONE_MOVES), 0, 1)
+    zmoves = zmoves.sort_values(['_dir', 'composite'], ascending=[True, False])
+    _write_sheet(wb.create_sheet('ย้ายโซน RSI'), zmoves, zone_colors=True)
     wb.save(out_path)
 
 
@@ -250,18 +303,23 @@ def main():
 
     u['composite'] = composite_score(u)
     u['คำเตือน'] = warnings_col(u)
-    mA, mB, mC = setup_momentum(u), setup_breakout(u), setup_pullback(u)
+    mA, mB, mC, mD = setup_momentum(u), setup_breakout(u), setup_pullback(u), setup_mcdx(u)
     u['setups'] = ''
     u.loc[mA, 'setups'] += 'A-Momentum '
     u.loc[mB, 'setups'] += 'B-Breakout '
     u.loc[mC, 'setups'] += 'C-Pullback '
+    u.loc[mD, 'setups'] += 'D-MCDX '
 
     show = ['ticker', 'close', 'composite', 'setups', 'RSI14', 'ADX', 'RS_rank_20d',
-            'vol_ratio', 'ret_20d', 'stop_2ATR', 'ValMA25_M', 'sector', 'คำเตือน']
-    for name, mask in [('A-Momentum', mA), ('B-Breakout', mB), ('C-Pullback', mC)]:
+            'vol_ratio', 'MCDX_red', 'dMCDX5', 'RSIzone', 'ret_20d', 'stop_2ATR',
+            'ValMA25_M', 'sector', 'คำเตือน']
+    for name, mask in [('A-Momentum', mA), ('B-Breakout', mB), ('C-Pullback', mC), ('D-MCDX', mD)]:
         sub = u[mask].sort_values('composite', ascending=False)
         print(f'\n===== {name}: {len(sub)} ตัว =====')
         print(sub[show].head(12).round(2).to_string(index=False))
+    zm = u[u['RSIzoneMove'].isin(BULL_ZONE_MOVES + BEAR_ZONE_MOVES)]
+    print(f"\nย้ายโซนขาขึ้น: {u.loc[u['RSIzoneMove'].isin(BULL_ZONE_MOVES), 'ticker'].tolist()}")
+    print(f"ย้ายโซนขาลง: {u.loc[u['RSIzoneMove'].isin(BEAR_ZONE_MOVES), 'ticker'].tolist()}")
 
     build_report(u, out, asof, df['SET_close'].iloc[0], df['SET_chg_20d'].iloc[0], len(df))
     print(f'\nบันทึกรายงานที่ {out}')
