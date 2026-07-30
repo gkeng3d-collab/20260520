@@ -119,6 +119,69 @@ BULL_ZONE_MOVES = ['zone1 -> zone2', 'zone2 -> zone3', 'zone1 -> zone3', 'zone4 
 BEAR_ZONE_MOVES = ['zone3 -> zone1', 'zone4 -> zone1', 'zone3 -> zone4', 'zone2 -> zone1']
 
 
+# ---------- Market breadth (คำนวณจากหุ้นทั้งไฟล์) ----------
+def market_breadth(df: pd.DataFrame) -> list:
+    """คืน list ของ (ตัวชี้วัด, ค่า, ความหมาย) — คิดเฉพาะแถวที่มีข้อมูลของแต่ละตัว"""
+    def pct(mask, base):
+        base = base & mask.notna() if hasattr(mask, 'notna') else base
+        n = int(base.sum())
+        return (mask & base).sum() / n * 100 if n else float('nan')
+
+    ok = df['bars_stale'] == 0
+    rows = []
+    for col, label in [('MA200', '% หุ้นยืนเหนือ MA200'), ('MA100', '% หุ้นยืนเหนือ MA100'),
+                       ('MA60', '% หุ้นยืนเหนือ MA60'), ('MA25', '% หุ้นยืนเหนือ MA25')]:
+        base = ok & df[col].notna()
+        val = ((df['close'] > df[col]) & base).sum() / base.sum() * 100
+        rows.append((label, f'{val:.1f}%'))
+    rows.append(('% หุ้น CDC เขียว (EMA12>EMA26)', f"{(df['CDC'] & ok).sum() / ok.sum() * 100:.1f}%"))
+    rows.append(('% หุ้น RSI วัน > 50', f"{((df['RSI14'] > 50) & ok).sum() / ok.sum() * 100:.1f}%"))
+    rows.append(('% หุ้นอยู่ zone3 (แข็งทั้งวัน+สัปดาห์)',
+                 f"{((df['RSIzone'] == 'zone3') & ok).sum() / ok.sum() * 100:.1f}%"))
+    up, dn = int(((df['ret_1d'] > 0) & ok).sum()), int(((df['ret_1d'] < 0) & ok).sum())
+    rows.append(('Advance / Decline วันล่าสุด', f'{up} ขึ้น / {dn} ลง (ratio {up / max(dn, 1):.2f})'))
+    nh, nl = int((df['BreakPMax60'] & ok).sum()), int((df['BreakPMin60'] & ok).sum())
+    rows.append(('New high / New low รอบ 60 วัน', f'{nh} ตัว / {nl} ตัว'))
+    rows.append(('% หุ้นที่ MCDX แดง ≥ 10 (เจ้าเข้าชัด)',
+                 f"{((df['MCDX_red'] >= 10) & ok).sum() / ok.sum() * 100:.1f}%"))
+    rows.append(('ผลตอบแทน 20 วัน มัธยฐานทั้งตลาด', f"{df.loc[ok, 'ret_20d'].median():+.2f}%"))
+    return rows
+
+
+def breadth_verdict(df: pd.DataFrame) -> str:
+    ok = df['bars_stale'] == 0
+    base = ok & df['MA200'].notna()
+    above200 = ((df['close'] > df['MA200']) & base).sum() / base.sum() * 100
+    cdc = (df['CDC'] & ok).sum() / ok.sum() * 100
+    if above200 >= 55 and cdc >= 55:
+        return (f'ตลาดกว้างแข็งแรง (เหนือ MA200 {above200:.0f}%, CDC เขียว {cdc:.0f}%) — '
+                'เทรดฝั่งซื้อได้ตามปกติ')
+    if above200 >= 45 or cdc >= 50:
+        return (f'ตลาดเลือกทาง (เหนือ MA200 {above200:.0f}%, CDC เขียว {cdc:.0f}%) — '
+                'เน้นเฉพาะหุ้นแข็งกว่าตลาด คุมขนาดไม้')
+    return (f'ตลาดกว้างอ่อนแอ (เหนือ MA200 {above200:.0f}%, CDC เขียว {cdc:.0f}%) — '
+            'ลดขนาดไม้/ถือเงินสดมากขึ้น สัญญาณซื้อล้มเหลวง่าย')
+
+
+# ---------- Sector rotation (คำนวณจากหุ้นคุณภาพทั้งไฟล์) ----------
+def sector_stats(df: pd.DataFrame) -> pd.DataFrame:
+    q = df[(df['data_quality_ok'] == True) & (df['bars_stale'] == 0)]  # noqa: E712
+    g = q.groupby('sector')
+    t = pd.DataFrame({
+        'จำนวนหุ้น': g.size(),
+        'ret20_med': g['ret_20d'].median(),
+        'ret60_med': g['ret_60d'].median(),
+        '%เหนือEMA26': g.apply(lambda x: (x['EMA26%C'] > 0).mean() * 100),
+        '%CDCเขียว': g.apply(lambda x: x['CDC'].mean() * 100),
+        'RS_rank20_med': g['RS_rank_20d'].median(),
+        'MCDX_med': g['MCDX_red'].median(),
+    })
+    # อันดับโมเมนตัมกลุ่ม: เฉลี่ยอันดับของ ret 20 วัน กับ % เหนือ EMA26
+    t['อันดับ'] = (t['ret20_med'].rank(ascending=False)
+                   + t['%เหนือEMA26'].rank(ascending=False)).rank(method='first').astype(int)
+    return t.sort_values('อันดับ')
+
+
 def composite_score(u: pd.DataFrame) -> pd.Series:
     s = 0.25 * u['SCORE'].fillna(0)                       # คะแนน 8 เงื่อนไขจากไฟล์ (0-100)
     s += 0.20 * u['RS_rank_20d'].fillna(0)                # ความแข็งเทียบตลาด
@@ -159,7 +222,7 @@ def warnings_col(u: pd.DataFrame) -> pd.Series:
 
 # ---------- ส่วนสร้างรายงาน Excel ----------
 HDR = ['หุ้น', 'กลยุทธ์', 'ราคาปิด', 'คะแนนรวม', 'SCORE ไฟล์', 'RSI วัน', 'RSI สัปดาห์', 'ADX',
-       'RS เทียบตลาด (pct)', 'ผลตอบแทน 20 วัน %', 'วอลุ่ม/เฉลี่ย 25 วัน (เท่า)',
+       'RS เทียบตลาด (pct)', 'ชนะกลุ่ม 20 วัน %', 'ผลตอบแทน 20 วัน %', 'วอลุ่ม/เฉลี่ย 25 วัน (เท่า)',
        'MCDX แดง (แรงรายใหญ่)', 'ΔMCDX 5 แท่ง', 'โซน RSI', 'ย้ายโซน',
        'แนวรับ EMA26', 'จุดตัดขาดทุน (2ATR)', 'ระยะถึงจุดตัด %', 'ATR ต่อวัน %',
        'มูลค่าซื้อขายเฉลี่ย 25 วัน (ลบ.)', 'มูลค่าตลาด (พันลบ.)', 'PE', 'ปันผล %',
@@ -173,7 +236,8 @@ def _row_of(r):
     zmove = '' if r['RSIzoneMove'] == 'Not move' else r['RSIzoneMove']
     return [r['ticker'], r['setups'].strip(), r['close'], r['composite'], r['SCORE'],
             round(r['RSI14'], 1), round(r['RSI14W'], 1), round(r['ADX'], 1),
-            round(r['RS_rank_20d'], 1), round(r['ret_20d'], 2), round(r['vol_ratio'], 2),
+            round(r['RS_rank_20d'], 1), round(r['RS_vs_sector_20d'], 2),
+            round(r['ret_20d'], 2), round(r['vol_ratio'], 2),
             round(r['MCDX_red'], 1), round(r['dMCDX5'], 1), r['RSIzone'], zmove,
             r['EMA26_price'], round(r['stop_2ATR'], 2), round(r['stop_dist%'], 2),
             round(r['ATR%'], 2), round(r['ValMA25_M'], 1), round(r['Mcap_B'], 1),
@@ -211,14 +275,58 @@ def _write_sheet(ws, rows: pd.DataFrame, zone_colors: bool = False):
         if fill is not None:
             for j in range(1, len(HDR) + 1):
                 ws.cell(i, j).fill = fill
-    widths = [8, 22, 9, 9, 9, 8, 9, 8, 10, 10, 11, 10, 9, 8, 14, 10, 11, 9, 8, 12, 10, 7, 8, 22, 34]
+    widths = [8, 22, 9, 9, 9, 8, 9, 8, 10, 10, 10, 11, 10, 9, 8, 14, 10, 11, 9, 8, 12, 10, 7, 8, 22, 34]
     for j, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(j)].width = w
     ws.row_dimensions[1].height = 42
 
 
+def _write_market_sheet(ws, breadth_rows: list, verdict: str, sec: pd.DataFrame):
+    title_font = Font(name=ARIAL, bold=True, size=11)
+    b_font = Font(name=ARIAL, bold=True, size=10)
+    cell_font = Font(name=ARIAL, size=10)
+    th_font = Font(name=ARIAL, bold=True, color='FFFFFF', size=10)
+    th_fill = PatternFill('solid', fgColor='1F4E79')
+    thin = Side(style='thin', color='D9D9D9')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    ws.cell(1, 1, 'ภาพกว้างตลาด (Market Breadth) — คำนวณจากหุ้นทุกตัวในไฟล์').font = title_font
+    i = 3
+    for label, val in breadth_rows:
+        ws.cell(i, 1, label).font = cell_font
+        ws.cell(i, 2, val).font = b_font
+        i += 1
+    ws.cell(i + 1, 1, 'สรุปโหมดตลาด:').font = b_font
+    c = ws.cell(i + 1, 2, verdict)
+    c.font = b_font
+    c.alignment = Alignment(wrap_text=True, vertical='top')
+
+    i += 4
+    ws.cell(i, 1, 'แรงหมุนรายกลุ่ม (Sector Rotation) — เรียงจากกลุ่มแข็งสุด').font = title_font
+    i += 2
+    heads = ['กลุ่ม (TradingView)', 'อันดับ', 'จำนวนหุ้น', 'ret 20 วัน มัธยฐาน %',
+             'ret 60 วัน มัธยฐาน %', '% เหนือ EMA26', '% CDC เขียว', 'RS rank มัธยฐาน',
+             'MCDX แดง มัธยฐาน']
+    for j, h in enumerate(heads, 1):
+        c = ws.cell(i, j, h)
+        c.font, c.fill, c.border = th_font, th_fill, border
+        c.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    for _, r in sec.iterrows():
+        i += 1
+        vals = [r.name, int(r['อันดับ']), int(r['จำนวนหุ้น']), round(r['ret20_med'], 2),
+                round(r['ret60_med'], 2), round(r['%เหนือEMA26'], 1), round(r['%CDCเขียว'], 1),
+                round(r['RS_rank20_med'], 1), round(r['MCDX_med'], 1)]
+        for j, v in enumerate(vals, 1):
+            c = ws.cell(i, j, v)
+            c.font, c.border = cell_font, border
+            if isinstance(v, float):
+                c.number_format = '#,##0.00'
+    for col, w in zip('ABCDEFGHI', [34, 8, 10, 12, 12, 11, 11, 11, 11]):
+        ws.column_dimensions[col].width = w
+
+
 def build_report(u: pd.DataFrame, out_path: str, asof: str, set_close: float, set_chg20: float,
-                 n_total: int):
+                 n_total: int, breadth_rows: list, verdict: str, sec: pd.DataFrame):
     wb = Workbook()
     ws = wb.active
     ws.title = 'อ่านก่อน (เกณฑ์)'
@@ -257,6 +365,10 @@ def build_report(u: pd.DataFrame, out_path: str, asof: str, set_close: float, se
         ('MCDX ในตาราง',
          'คอลัมน์ "MCDX แดง" = แรงรายใหญ่ล่าสุด (ยิ่งสูงยิ่งเข้าเยอะ, ≥10 = ชัดเจน) | "ΔMCDX 5 แท่ง" = '
          'เปลี่ยนแปลง 5 วัน บวก = กำลังเก็บเพิ่ม ลบมาก (≤ -8) = แผ่วลง มีธงเตือนให้'),
+        ('ชีท "ภาพตลาด & กลุ่ม"',
+         'Breadth ของทั้งตลาด (% เหนือ MA ต่างๆ, A/D, new high/low) + สรุปโหมดตลาด และตารางแรงหมุนรายกลุ่ม | '
+         'คอลัมน์ "ชนะกลุ่ม 20 วัน %" ในทุกตาราง = ผลตอบแทนหุ้น ลบ มัธยฐานของกลุ่มตัวเอง (บวก = นำกลุ่ม) '
+         'เป็นข้อมูลประกอบ ไม่ถูกนำไปคิดในคะแนนรวม'),
         ('', ''),
         ('การใช้งาน',
          'จุดตัดขาดทุนอ้างอิง 2×ATR ใต้ราคาปิด หรือใต้แนวรับ EMA26 — เลือกอันที่ตื้นกว่าตามสไตล์ | '
@@ -275,6 +387,7 @@ def build_report(u: pd.DataFrame, out_path: str, asof: str, set_close: float, se
     ws.column_dimensions['A'].width = 30
     ws.column_dimensions['B'].width = 150
 
+    _write_market_sheet(wb.create_sheet('ภาพตลาด & กลุ่ม'), breadth_rows, verdict, sec)
     matched = u[u['setups'] != ''].sort_values('composite', ascending=False)
     _write_sheet(wb.create_sheet('Top 20 รวมทุกกลยุทธ์'), matched.head(20))
     for name in ['A-Momentum', 'B-Breakout', 'C-Pullback']:
@@ -301,6 +414,21 @@ def main():
     u = load_universe(df)
     print(f'Universe หลังกรองสภาพคล่อง/คุณภาพ: {len(u)} ตัว จากทั้งหมด {len(df)}')
 
+    # RS เทียบกลุ่มตัวเอง: ผลตอบแทน 20 วันของหุ้น ลบ มัธยฐานของกลุ่ม (คิดจากหุ้นคุณภาพทั้งไฟล์)
+    q = df[(df['data_quality_ok'] == True) & (df['bars_stale'] == 0)]  # noqa: E712
+    sec_med = q.groupby('sector')['ret_20d'].median()
+    u['RS_vs_sector_20d'] = u['ret_20d'] - u['sector'].map(sec_med)
+
+    breadth_rows = market_breadth(df)
+    verdict = breadth_verdict(df)
+    sec = sector_stats(df)
+    print('\n===== ภาพกว้างตลาด =====')
+    for label, val in breadth_rows:
+        print(f'  {label}: {val}')
+    print('  โหมดตลาด:', verdict)
+    print('\n===== แรงหมุนรายกลุ่ม (เรียงแข็ง -> อ่อน) =====')
+    print(sec.round(2).to_string())
+
     u['composite'] = composite_score(u)
     u['คำเตือน'] = warnings_col(u)
     mA, mB, mC, mD = setup_momentum(u), setup_breakout(u), setup_pullback(u), setup_mcdx(u)
@@ -321,7 +449,8 @@ def main():
     print(f"\nย้ายโซนขาขึ้น: {u.loc[u['RSIzoneMove'].isin(BULL_ZONE_MOVES), 'ticker'].tolist()}")
     print(f"ย้ายโซนขาลง: {u.loc[u['RSIzoneMove'].isin(BEAR_ZONE_MOVES), 'ticker'].tolist()}")
 
-    build_report(u, out, asof, df['SET_close'].iloc[0], df['SET_chg_20d'].iloc[0], len(df))
+    build_report(u, out, asof, df['SET_close'].iloc[0], df['SET_chg_20d'].iloc[0], len(df),
+                 breadth_rows, verdict, sec)
     print(f'\nบันทึกรายงานที่ {out}')
 
 
