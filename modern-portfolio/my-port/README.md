@@ -11,12 +11,14 @@ BLC 400, SISB 200, SPALI 100, AIT 200, DCC 1100, LHHOTEL 200, SECURE 300, INETRE
 
 ```bash
 cd modern-portfolio
-python fetch_yahoo.py --holdings my-port/holdings.csv --suffix .BK --out my-port/prices.csv
+python fetch_yahoo.py VAYU1.BK --holdings my-port/holdings.csv --suffix .BK --out my-port/prices.csv
 ```
 
-ได้ `my-port/prices.csv` = ราคาปิดปรับปันผล (adjusted close) รายวันย้อนหลัง 3 ปี
-ของทั้ง 8 ตัว โดยช่วงข้อมูลจะเริ่มจากวันที่ทุกตัวมีข้อมูลครบ
-(BLC เพิ่งเข้าตลาดกลางปี 2023 จึงเป็นตัวกำหนดจุดเริ่ม)
+ได้ `my-port/prices.csv` = ราคาปิดปรับปันผล (adjusted close) รายวัน
+ของหุ้นในพอร์ตทุกตัว + VAYU1 (ตัวเป้าหมายที่ยังไม่ได้ซื้อ ใส่เพิ่มแบบระบุชื่อ)
+ช่วงข้อมูลเริ่มจากวันที่ทุกตัวมีข้อมูลครบ — VAYU1 เข้าเทรด ต.ค. 2024
+จึงตัดหน้าต่างข้อมูลเหลือ ~1.8 ปี ถ้าอยากได้สถิติ 3 ปีของหุ้นเดิม 9 ตัว
+ให้รันอีกรอบโดยไม่ใส่ VAYU1.BK แยกไฟล์กัน
 
 > REIT อย่าง LHHOTEL/INETREIT จ่ายปันผลสูง — การใช้ adjusted close
 > ทำให้ผลตอบแทนรวมปันผลถูกนับแล้ว ไม่โดนกดต่ำเกินจริง
@@ -41,6 +43,14 @@ python mpt.py rebalance my-port/prices.csv --holdings my-port/holdings.csv \
     --rf 0.015 --max-weight 0.30 --lot 100 --min-trade 500
 
 # อยากเติมเงินเข้าพอร์ตพร้อม rebalance: เพิ่ม --cash 10000
+```
+
+หรือปรับเข้าหาน้ำหนักเป้าหมายที่วางไว้ใน `suggested_weights.csv`
+(มี VAYU1 ~6% — ใช้เงินใหม่ ~1,110 บาทซื้อ 100 หน่วย จึงใส่ `--cash`):
+
+```bash
+python mpt.py rebalance my-port/prices.csv --holdings my-port/holdings.csv \
+    --weights my-port/suggested_weights.csv --cash 1110 --lot 100 --min-trade 300
 ```
 
 `--rf 0.015` ≈ ผลตอบแทนพันธบัตรไทยระยะสั้น (ปรับได้ตามจริง)
