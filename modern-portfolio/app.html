@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MPT Portfolio Manager — จัดพอร์ตตามทฤษฎี Markowitz</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --card:#ffffff; --ink:#1c2430; --muted:#68727f;
+    --line:#e3e7ec; --accent:#0f6fde; --good:#0a8f4d; --bad:#c93838; --warn:#a06a00;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Segoe UI",Tahoma,system-ui,-apple-system,"Noto Sans Thai",sans-serif;
+       background:var(--bg);color:var(--ink);line-height:1.5}
+  .wrap{max-width:1100px;margin:0 auto;padding:18px 16px 60px}
+  h1{font-size:1.45rem;margin:.2em 0 .1em}
+  h2{font-size:1.05rem;margin:0 0 10px;display:flex;align-items:center;gap:8px}
+  h2 .n{background:var(--accent);color:#fff;border-radius:50%;width:22px;height:22px;
+        display:inline-flex;align-items:center;justify-content:center;font-size:.8rem;flex:none}
+  .sub{color:var(--muted);font-size:.9rem;margin-bottom:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+        padding:14px 16px;margin-bottom:14px}
+  .grid{display:grid;gap:12px}
+  @media(min-width:760px){ .grid.c3{grid-template-columns:1fr 1fr 1fr} .grid.c2{grid-template-columns:1fr 1fr} }
+  label{font-size:.82rem;color:var(--muted);display:block;margin-bottom:2px}
+  input[type=text],input[type=number],textarea,select{
+    width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:7px;
+    font:inherit;background:#fff;color:var(--ink)}
+  textarea{font-family:Consolas,Menlo,monospace;font-size:.78rem;min-height:110px}
+  button{font:inherit;border:0;border-radius:8px;padding:8px 14px;cursor:pointer}
+  button.primary{background:var(--accent);color:#fff;font-weight:600}
+  button.ghost{background:#eef2f7;color:var(--ink)}
+  button:disabled{opacity:.5;cursor:default}
+  table{border-collapse:collapse;width:100%;font-size:.85rem}
+  th,td{border-bottom:1px solid var(--line);padding:5px 8px;text-align:right;white-space:nowrap}
+  th:first-child,td:first-child{text-align:left}
+  th{color:var(--muted);font-weight:600;font-size:.78rem}
+  .scroll{overflow-x:auto}
+  .pill{display:inline-block;border-radius:20px;padding:1px 10px;font-size:.75rem;font-weight:700}
+  .pill.buy{background:#e2f5ea;color:var(--good)} .pill.sell{background:#fbe7e7;color:var(--bad)}
+  .pill.hold{background:#eef1f5;color:var(--muted)}
+  .status{font-size:.85rem;margin-top:8px;color:var(--muted);white-space:pre-wrap}
+  .status.err{color:var(--bad)} .status.ok{color:var(--good)}
+  .kpis{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0}
+  .kpi{border:1px solid var(--line);border-radius:9px;padding:8px 12px;background:#fbfcfe;min-width:150px}
+  .kpi .t{font-size:.75rem;color:var(--muted)} .kpi .v{font-size:1.05rem;font-weight:700}
+  .kpi.hl{border-color:var(--accent);background:#f0f6ff}
+  canvas{width:100%;height:auto;border:1px solid var(--line);border-radius:8px;background:#fff}
+  .note{font-size:.8rem;color:var(--muted)}
+  .warnbox{background:#fff8e8;border:1px solid #eadfb9;color:#6b5716;border-radius:8px;
+           padding:8px 12px;font-size:.82rem;margin-top:10px}
+  .neg{color:var(--bad)} .pos{color:var(--good)}
+  .flex{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  input[type=range]{width:100%}
+  .hidden{display:none}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📈 MPT Portfolio Manager</h1>
+  <div class="sub">จัดพอร์ตตามทฤษฎี Modern Portfolio Theory (Markowitz mean–variance) —
+    คำนวณในเครื่องคุณทั้งหมด ข้อมูลไม่ถูกส่งไปไหน</div>
+
+  <!-- ① price data -->
+  <div class="card">
+    <h2><span class="n">1</span>ข้อมูลราคาย้อนหลัง</h2>
+    <div class="grid c3">
+      <div>
+        <label>ดึงจาก Yahoo Finance (ต้องต่อเน็ต — ถ้าโดน CORS บล็อกให้ใช้ช่องวางไฟล์แทน)</label>
+        <input type="text" id="tickers" spellcheck="false">
+        <div class="flex" style="margin-top:6px">
+          <button class="primary" id="btnFetch">ดึงข้อมูล 3 ปี</button>
+          <select id="fetchRange"><option value="2y">2 ปี</option><option value="3y" selected>3 ปี</option><option value="5y">5 ปี</option></select>
+        </div>
+      </div>
+      <div>
+        <label>หรืออัปโหลดไฟล์ CSV (จาก fetch_yahoo.py / โบรกเกอร์)</label>
+        <input type="file" id="file" accept=".csv,.txt">
+        <div class="note" style="margin-top:6px">รูปแบบ: คอลัมน์ <code>date</code> (มี/ไม่มีก็ได้) ตามด้วยราคาปิดรายสินทรัพย์ เรียงเก่า→ใหม่</div>
+      </div>
+      <div>
+        <label>หรือวางข้อความ CSV ตรงนี้</label>
+        <textarea id="paste" placeholder="date,BLC,SISB,...&#10;2024-07-01,4.50,11.2,..."></textarea>
+        <button class="ghost" id="btnPaste" style="margin-top:6px">ใช้ข้อมูลที่วาง</button>
+      </div>
+    </div>
+    <div id="dataStatus" class="status">ยังไม่มีข้อมูล — ใส่ข้อมูลราคาก่อน แล้วส่วนล่างจะปลดล็อกให้กดคำนวณ</div>
+  </div>
+
+  <!-- ② holdings -->
+  <div class="card">
+    <h2><span class="n">2</span>พอร์ตปัจจุบัน (แก้ตัวเลขได้)</h2>
+    <div class="scroll"><table id="holdTable">
+      <thead><tr><th>สินทรัพย์</th><th>จำนวน (หุ้น/หน่วย)</th><th>ราคาล่าสุด</th><th>มูลค่า</th><th>สัดส่วน</th><th></th></tr></thead>
+      <tbody></tbody>
+      <tfoot><tr><td><b>รวม</b></td><td></td><td></td><td id="totVal" style="font-weight:700">–</td><td></td><td></td></tr></tfoot>
+    </table></div>
+    <div class="flex" style="margin-top:8px">
+      <button class="ghost" id="btnAddRow">+ เพิ่มสินทรัพย์</button>
+      <span class="note">ชื่อต้องตรงกับหัวคอลัมน์ในไฟล์ราคา (ตัวใหญ่เล็กไม่เป็นไร) · ใส่ 0 = ยังไม่ถือแต่ให้ร่วมคำนวณ</span>
+    </div>
+  </div>
+
+  <!-- ③ params -->
+  <div class="card">
+    <h2><span class="n">3</span>พารามิเตอร์</h2>
+    <div class="grid c3">
+      <div><label>อัตราปลอดความเสี่ยง rf (% ต่อปี)</label><input type="number" id="rf" value="1.5" step="0.1"></div>
+      <div><label>เพดานน้ำหนักต่อสินทรัพย์ (%)</label><input type="number" id="maxW" value="30" step="5" min="1" max="100"></div>
+      <div><label>เงินเติมเข้า/ถอนออก (บาท)</label><input type="number" id="cash" value="0" step="100"></div>
+      <div><label>Board lot (หุ้นไทย = 100)</label><input type="number" id="lot" value="100" step="1" min="0"></div>
+      <div><label>ข้ามออร์เดอร์ที่เล็กกว่า (บาท)</label><input type="number" id="minTrade" value="300" step="50" min="0"></div>
+      <div style="display:flex;align-items:flex-end"><button class="primary" id="btnRun" style="width:100%;padding:11px" disabled>คำนวณ MPT ▶</button></div>
+    </div>
+  </div>
+
+  <!-- results -->
+  <div id="results" class="hidden">
+    <div class="card">
+      <h2><span class="n">4</span>สถิติรายสินทรัพย์ (annualized)</h2>
+      <div class="scroll"><table id="statTable"></table></div>
+      <h2 style="margin-top:16px"><span class="n">5</span>Correlation matrix <span class="note">— คู่สีเขียว (ต่ำ/ติดลบ) คือคู่ที่กระจายความเสี่ยงให้กัน</span></h2>
+      <div class="scroll"><table id="corrTable"></table></div>
+    </div>
+
+    <div class="card">
+      <h2><span class="n">6</span>Efficient Frontier</h2>
+      <canvas id="chart" width="1060" height="620"></canvas>
+      <div class="kpis" id="portCards"></div>
+      <div style="margin-top:6px">
+        <label>เลื่อนเลือกระดับความเสี่ยงบนเส้น frontier (จุดวงแหวนเขียวบนกราฟ)</label>
+        <input type="range" id="riskSlider" min="0" max="59" value="30">
+        <div class="flex" id="sliderInfo" style="font-size:.85rem"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span class="n">7</span>แผนปรับพอร์ต (Rebalance)</h2>
+      <div class="flex" style="margin-bottom:8px">
+        <label style="margin:0">ใช้น้ำหนักเป้าหมายจาก:</label>
+        <select id="targetSrc">
+          <option value="ms" selected>พอร์ต Max Sharpe (แนะนำ)</option>
+          <option value="gmv">พอร์ตความเสี่ยงต่ำสุด (GMV)</option>
+          <option value="sel">จุดที่เลือกบนสไลเดอร์</option>
+        </select>
+        <button class="ghost" id="btnCsvW">⬇ weights.csv</button>
+        <button class="ghost" id="btnCsvO">⬇ orders.csv</button>
+      </div>
+      <div class="scroll"><table id="rebTable"></table></div>
+      <div id="rebNote" class="status"></div>
+      <div class="warnbox">ผลคำนวณอิงข้อมูลอดีตทั้งหมด — expected return/correlation ในอนาคตอาจต่างไปมาก
+        ระบบไม่คิดค่าคอมมิชชัน/ภาษี และไม่ใช่คำแนะนำการลงทุน โปรดใช้วิจารณญาณประกอบ</div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================ MPT-CORE-BEGIN ============================ */
+"use strict";
+
+function parsePrices(text){
+  const lines = text.replace(/^﻿/,"").split(/\r?\n/).filter(l=>l.trim()!=="");
+  if(lines.length < 2) throw "ไฟล์ต้องมีหัวตารางและข้อมูลอย่างน้อย 1 แถว";
+  const split = l => l.split(",").map(s=>s.trim());
+  const head = split(lines[0]);
+  const isDate = s => /^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/.test(s) || /^\d{1,2}[-/]\d{1,2}[-/]\d{4}$/.test(s) || /^\d{8}$/.test(s);
+  const firstRow = split(lines[1]);
+  const hasDate = isDate(firstRow[0]) || /^(date|day|time|วันที่)$/i.test(head[0]);
+  const names = (hasDate ? head.slice(1) : head).map(s=>s.trim());
+  if(names.length < 2) throw "ต้องมีสินทรัพย์อย่างน้อย 2 คอลัมน์";
+  const seen = new Set();
+  for(const n of names){ const k=n.toLowerCase();
+    if(!n) throw "หัวคอลัมน์ว่าง"; if(seen.has(k)) throw "ชื่อสินทรัพย์ซ้ำ: "+n; seen.add(k); }
+  const dates = hasDate ? [] : null, P = [];
+  let last = null;
+  for(let i=1;i<lines.length;i++){
+    const c = split(lines[i]);
+    const cells = hasDate ? c.slice(1) : c;
+    if(cells.length !== names.length) throw `บรรทัด ${i+1}: จำนวนช่องราคา (${cells.length}) ไม่เท่าจำนวนสินทรัพย์ (${names.length})`;
+    if(hasDate) dates.push(c[0]);
+    const row = cells.map((s,j)=>{
+      s = s.replace(/,/g,"");
+      if(s===""||/^(na|n\/a|nan|null|-)$/i.test(s)){
+        if(last) return last[j];
+        throw `บรรทัด ${i+1}: ราคาว่างในแถวแรก`;
+      }
+      const v = Number(s);
+      if(!isFinite(v)) throw `บรรทัด ${i+1}: อ่านตัวเลขไม่ได้ "${s}"`;
+      if(v<=0) throw `บรรทัด ${i+1}: ราคาต้องมากกว่า 0`;
+      return v;
+    });
+    P.push(row); last = row;
+  }
+  if(P.length < 3) throw "ต้องมีราคาอย่างน้อย 3 แถวเพื่อคำนวณผลตอบแทน";
+  return {names, dates, P};
+}
+
+function detectPpy(dates){
+  if(!dates) return 252;
+  const ms = dates.map(s=>{
+    const m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/) ;
+    if(m) return Date.UTC(+m[1], +m[2]-1, +m[3]);
+    const m2 = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+    if(m2) return Date.UTC(+m2[3], +m2[2]-1, +m2[1]);
+    return NaN;
+  });
+  if(ms.some(isNaN)) return 252;
+  const gaps = [];
+  for(let i=1;i<ms.length;i++){ const g=(ms[i]-ms[i-1])/86400000; if(g>0) gaps.push(g); }
+  if(!gaps.length) return 252;
+  gaps.sort((a,b)=>a-b);
+  const med = gaps[Math.floor(gaps.length/2)];
+  if(med<=2) return 252; if(med<=10) return 52; if(med<=45) return 12; if(med<=200) return 4;
+  return 1;
+}
+
+function computeStats(P, ppy){
+  const T = P.length-1, n = P[0].length;
+  const R = Array.from({length:T}, (_,t)=> P[t+1].map((v,j)=> v/P[t][j]-1));
+  const mean = Array(n).fill(0);
+  for(const r of R) for(let j=0;j<n;j++) mean[j]+=r[j];
+  for(let j=0;j<n;j++) mean[j]/=T;
+  const cov = Array.from({length:n},()=>Array(n).fill(0));
+  for(const r of R) for(let a=0;a<n;a++){ const da=r[a]-mean[a];
+    for(let b=a;b<n;b++) cov[a][b]+= da*(r[b]-mean[b]); }
+  for(let a=0;a<n;a++) for(let b=a;b<n;b++){ cov[a][b]/= (T-1); cov[b][a]=cov[a][b]; }
+  const mu = mean.map(m=>m*ppy);
+  const covA = cov.map(row=>row.map(v=>v*ppy));
+  const vol = covA.map((row,j)=>Math.sqrt(Math.max(row[j],0)));
+  const corr = covA.map((row,a)=>row.map((v,b)=> v/((vol[a]||1e-12)*(vol[b]||1e-12))));
+  return {R, mu, cov:covA, vol, corr};
+}
+
+function maxDrawdown(col){
+  let peak = col[0], mdd = 0;
+  for(const v of col){ if(v>peak) peak=v; const d=v/peak-1; if(d<mdd) mdd=d; }
+  return mdd;
+}
+function cagr(col, periods, ppy){ return Math.pow(col[col.length-1]/col[0], ppy/periods)-1; }
+
+function matVec(S,w){ return S.map(row=> row.reduce((s,v,j)=> s+v*w[j],0)); }
+function dot(a,b){ let s=0; for(let i=0;i<a.length;i++) s+=a[i]*b[i]; return s; }
+function portPerf(w, mu, S, rf){
+  const ret = dot(w,mu), varr = dot(w, matVec(S,w));
+  const vol = Math.sqrt(Math.max(varr,0));
+  return {ret, vol, sharpe: vol>1e-12 ? (ret-rf)/vol : NaN};
+}
+
+// projection onto { lo <= w_i <= hi, sum w = 1 } by bisection on the shift
+function projCappedSimplex(v, lo, hi){
+  const n = v.length;
+  if(n*hi < 1-1e-9 || n*lo > 1+1e-9) throw `เพดานน้ำหนักเป็นไปไม่ได้: ${n} ตัว × ${(hi*100).toFixed(0)}% < 100%`;
+  let a = Math.max(...v)-lo+1, b = Math.min(...v)-hi-1; // s(a)=n*lo<=1, s(b)=n*hi>=1
+  for(let k=0;k<80;k++){
+    const m = (a+b)/2;
+    let s = 0; for(const x of v) s += Math.min(hi, Math.max(lo, x-m));
+    if(s > 1) b = m; else a = m;
+  }
+  const m=(a+b)/2;
+  const w = v.map(x=> Math.min(hi, Math.max(lo, x-m)));
+  const s = w.reduce((x,y)=>x+y,0);
+  return w.map(x=>x/s);
+}
+
+function lambdaMax(S){
+  let v = S.map((_,i)=> 1/Math.sqrt(S.length)), lam = 1;
+  for(let k=0;k<40;k++){
+    const u = matVec(S,v); lam = Math.sqrt(dot(u,u))||1e-12;
+    v = u.map(x=>x/lam);
+  }
+  return lam;
+}
+
+// minimize w'Sw - t * mu.w  over capped simplex (projected gradient, warm start)
+function pgdMinimize(S, mu, t, w0, lo, hi, L){
+  let w = w0.slice();
+  const eta = 0.9/(2*L);
+  for(let k=0;k<600;k++){
+    const g = matVec(S,w).map((x,j)=> 2*x - t*mu[j]);
+    const w2 = projCappedSimplex(w.map((x,j)=> x-eta*g[j]), lo, hi);
+    let diff=0; for(let j=0;j<w.length;j++) diff=Math.max(diff,Math.abs(w2[j]-w[j]));
+    w = w2;
+    if(diff < 1e-10 && k>50) break;
+  }
+  return w;
+}
+
+// frontier by risk-tolerance sweep; returns points sorted by return
+function efficientFrontier(mu, S, lo, hi, nPts, rf){
+  const n = mu.length, L = lambdaMax(S);
+  const eq = Array(n).fill(1/n);
+  const ts = [0];
+  for(let i=0;i<50;i++) ts.push(Math.pow(10, -4 + 6*i/49));   // 1e-4 .. 1e2
+  let w = projCappedSimplex(eq, lo, hi);
+  const raw = [];
+  for(const t of ts){
+    w = pgdMinimize(S, mu, t, w, lo, hi, L);
+    const p = portPerf(w, mu, S, rf);
+    raw.push({t, w:w.slice(), ...p});
+  }
+  // refine around best sharpe
+  let bi = 0; raw.forEach((p,i)=>{ if(!(raw[bi].sharpe>=p.sharpe)) bi=i; });
+  const t0 = Math.max(raw[bi].t/4, 1e-5), t1 = (raw[bi].t||1e-4)*4;
+  let wr = raw[bi].w.slice();
+  for(let i=0;i<=30;i++){
+    const t = t0*Math.pow(t1/t0, i/30);
+    wr = pgdMinimize(S, mu, t, wr, lo, hi, L);
+    raw.push({t, w:wr.slice(), ...portPerf(wr, mu, S, rf)});
+  }
+  raw.sort((a,b)=> a.ret-b.ret || a.vol-b.vol);
+  // keep the efficient upper edge: increasing return, prune dominated, dedupe
+  const pts = [];
+  for(const p of raw){
+    while(pts.length && pts[pts.length-1].vol >= p.vol - 1e-12 && pts[pts.length-1].ret <= p.ret) pts.pop();
+    if(!pts.length || p.ret > pts[pts.length-1].ret + 1e-9) pts.push(p);
+  }
+  // resample to nPts evenly by return for the slider
+  const out = [];
+  if(pts.length <= nPts) out.push(...pts);
+  else for(let i=0;i<nPts;i++) out.push(pts[Math.round(i*(pts.length-1)/(nPts-1))]);
+  let ms = out[0], gmv = out[0];
+  for(const p of out){ if(!(ms.sharpe>=p.sharpe)) ms=p; if(p.vol<gmv.vol) gmv=p; }
+  return {points: out, ms, gmv};
+}
+
+function planRebalance({names, last, units, wTarget, cash, lot, minTrade}){
+  const curVal = units.map((u,j)=> u*last[j]);
+  const totalNow = curVal.reduce((a,b)=>a+b,0);
+  const totalTarget = totalNow + cash;
+  if(totalTarget <= 0) throw "มูลค่ารวม + เงินเติม ต้องมากกว่า 0";
+  const tgtVal = wTarget.map(w=> w*totalTarget);
+  let tUnits = tgtVal.map((tv,j)=> (tv-curVal[j])/last[j]);
+  if(lot > 0) tUnits = tUnits.map((u,j)=> Math.max(Math.round(u/lot)*lot, -units[j]));
+  let tVal = tUnits.map((u,j)=> u*last[j]);
+  for(let j=0;j<tVal.length;j++){
+    if(Math.abs(tVal[j]) < minTrade){ tVal[j]=0; tUnits[j]=0; }
+  }
+  const afterVal = curVal.map((v,j)=> v+tVal[j]);
+  const afterTot = afterVal.reduce((a,b)=>a+b,0);
+  return {curVal, totalNow, totalTarget, tgtVal, tUnits, tVal, afterVal, afterTot,
+          residual: totalTarget - afterTot,
+          wAfter: afterTot>0 ? afterVal.map(v=>v/afterTot) : wTarget};
+}
+/* ============================ MPT-CORE-END ============================ */
+
+/* ------------------------------- UI ---------------------------------- */
+const $ = id => document.getElementById(id);
+const pct = (x,d=2)=> (x*100).toFixed(d)+"%";
+const thb = x => x.toLocaleString("th-TH",{minimumFractionDigits:2,maximumFractionDigits:2});
+
+const DEFAULT_HOLDINGS = [
+  ["BLC",400],["SISB",200],["SPALI",100],["AIT",200],["DCC",1100],
+  ["LHHOTEL",200],["SECURE",300],["INETREIT",200],["PSL",100],["VAYU1",0]
+];
+let DATA = null;      // {names, dates, P}
+let CALC = null;      // computed results
+
+function loadState(){
+  try{ return JSON.parse(localStorage.getItem("mpt-app-v1"))||{}; }catch(e){ return {}; }
+}
+function saveState(){
+  const holds = readHoldings();
+  localStorage.setItem("mpt-app-v1", JSON.stringify({holds,
+    rf:$("rf").value, maxW:$("maxW").value, cash:$("cash").value,
+    lot:$("lot").value, minTrade:$("minTrade").value}));
+}
+
+function holdRow(name, units){
+  const tr = document.createElement("tr");
+  tr.innerHTML = `<td><input type="text" value="${name}" style="width:110px" spellcheck="false"></td>
+    <td><input type="number" value="${units}" style="width:110px;text-align:right" min="0" step="1"></td>
+    <td class="px">–</td><td class="val">–</td><td class="wt">–</td>
+    <td><button class="ghost" title="ลบ">✕</button></td>`;
+  tr.querySelector("button").onclick = ()=>{ tr.remove(); refreshHoldings(); };
+  tr.querySelectorAll("input").forEach(i=> i.addEventListener("change", refreshHoldings));
+  return tr;
+}
+function initHoldings(){
+  const st = loadState();
+  const rows = (st.holds && st.holds.length ? st.holds : DEFAULT_HOLDINGS);
+  const tb = $("holdTable").querySelector("tbody");
+  rows.forEach(([n,u])=> tb.appendChild(holdRow(n,u)));
+  if(st.rf) $("rf").value=st.rf; if(st.maxW) $("maxW").value=st.maxW;
+  if(st.cash) $("cash").value=st.cash; if(st.lot!==undefined&&st.lot!=="") $("lot").value=st.lot;
+  if(st.minTrade) $("minTrade").value=st.minTrade;
+  refreshHoldings();
+}
+function readHoldings(){
+  return [...$("holdTable").querySelectorAll("tbody tr")].map(tr=>{
+    const [n,u] = [...tr.querySelectorAll("input")].map(i=>i.value);
+    return [n.trim(), Math.max(0, Number(u)||0)];
+  }).filter(([n])=>n);
+}
+function refreshHoldings(){
+  const rows = [...$("holdTable").querySelectorAll("tbody tr")];
+  let total = 0, vals = [];
+  rows.forEach(tr=>{
+    const name = tr.querySelector("input").value.trim().toLowerCase();
+    const units = Number(tr.querySelectorAll("input")[1].value)||0;
+    let v = null;
+    if(DATA){
+      const j = DATA.names.findIndex(n=>n.toLowerCase()===name);
+      if(j>=0){ const px = DATA.P[DATA.P.length-1][j]; v = units*px;
+        tr.querySelector(".px").textContent = thb(px); }
+      else tr.querySelector(".px").textContent = "ไม่พบในไฟล์ราคา";
+    }
+    vals.push(v); if(v) total+=v;
+  });
+  rows.forEach((tr,i)=>{
+    tr.querySelector(".val").textContent = vals[i]!=null ? thb(vals[i]) : "–";
+    tr.querySelector(".wt").textContent = (vals[i]&&total>0) ? pct(vals[i]/total,1) : "–";
+  });
+  $("totVal").textContent = total>0 ? thb(total)+" บาท" : "–";
+  $("tickers").value = readHoldings().map(([n])=> n.toUpperCase()+(n.includes(".")?"":".BK")).join(" ");
+  saveState();
+}
+
+function setData(obj, sourceMsg){
+  DATA = obj;
+  const ppy = detectPpy(obj.dates);
+  const span = obj.dates ? ` (${obj.dates[0]} → ${obj.dates[obj.dates.length-1]})` : "";
+  const freq = {252:"รายวัน",52:"รายสัปดาห์",12:"รายเดือน",4:"รายไตรมาส",1:"รายปี"}[ppy]||ppy;
+  $("dataStatus").textContent = `✔ ${sourceMsg}: ${obj.names.length} สินทรัพย์ × ${obj.P.length} แถว${span} · ความถี่ ${freq}` +
+    (obj.P.length<60 ? "\n⚠ ข้อมูลค่อนข้างสั้น สถิติจะหยาบ" : "");
+  $("dataStatus").className = "status ok";
+  $("btnRun").disabled = false;
+  refreshHoldings();
+}
+function dataError(e){
+  $("dataStatus").textContent = "✖ "+e;
+  $("dataStatus").className = "status err";
+}
+
+$("btnPaste").onclick = ()=>{ try{ setData(parsePrices($("paste").value), "ใช้ข้อมูลที่วาง"); }catch(e){ dataError(e);} };
+$("file").addEventListener("change", ev=>{
+  const f = ev.target.files[0]; if(!f) return;
+  const r = new FileReader();
+  r.onload = ()=>{ try{ setData(parsePrices(r.result), "ไฟล์ "+f.name); }catch(e){ dataError(e);} };
+  r.readAsText(f);
+});
+
+/* Yahoo fetch with CORS fallbacks */
+async function fetchYahoo(sym, range){
+  const base = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=${range}&interval=1d&events=div%2Csplit`;
+  const tries = [base,
+    "https://api.allorigins.win/raw?url="+encodeURIComponent(base),
+    "https://corsproxy.io/?url="+encodeURIComponent(base)];
+  let lastErr = null;
+  for(const url of tries){
+    try{
+      const resp = await fetch(url, {signal: AbortSignal.timeout(15000)});
+      if(!resp.ok) throw "HTTP "+resp.status;
+      const data = await resp.json();
+      const res = data.chart && data.chart.result && data.chart.result[0];
+      if(!res) throw (data.chart&&data.chart.error&&data.chart.error.description)||"ไม่มีข้อมูล";
+      const closes = (res.indicators.adjclose && res.indicators.adjclose[0].adjclose) ||
+                     res.indicators.quote[0].close;
+      const out = new Map();
+      res.timestamp.forEach((t,i)=>{
+        if(closes[i]!=null){
+          const d = new Date(t*1000).toISOString().slice(0,10);
+          out.set(d, closes[i]);
+        }
+      });
+      if(out.size<3) throw "ข้อมูลน้อยเกินไป";
+      return out;
+    }catch(e){ lastErr = e; }
+  }
+  throw `${sym}: ${lastErr}`;
+}
+$("btnFetch").onclick = async ()=>{
+  const syms = $("tickers").value.split(/[\s,]+/).filter(Boolean);
+  if(!syms.length) return dataError("ยังไม่มีรายชื่อ ticker");
+  $("btnFetch").disabled = true;
+  const series = new Map();
+  try{
+    for(const s of syms){
+      $("dataStatus").textContent = `กำลังดึง ${s} ... (${series.size+1}/${syms.length})`;
+      $("dataStatus").className = "status";
+      series.set(s.replace(/\.BK$/i,""), await fetchYahoo(s, $("fetchRange").value));
+    }
+    const names = [...series.keys()];
+    const start = names.map(n=> [...series.get(n).keys()].sort()[0])
+                       .sort().reverse()[0];
+    const allDates = [...new Set([].concat(...names.map(n=>[...series.get(n).keys()])))]
+                     .filter(d=> d>=start).sort();
+    const lastVal = {};
+    names.forEach(n=>{
+      const prior = [...series.get(n).keys()].filter(d=> d<=start).sort();
+      lastVal[n] = series.get(n).get(prior[prior.length-1]);
+    });
+    const P = allDates.map(d=> names.map(n=>{
+      const v = series.get(n).get(d);
+      if(v!=null) lastVal[n]=v;
+      return lastVal[n];
+    }));
+    setData({names, dates: allDates, P}, "ดึงจาก Yahoo สำเร็จ");
+  }catch(e){
+    dataError(e+"\nเบราว์เซอร์อาจโดน CORS บล็อก — ใช้วิธีอัปโหลด/วางไฟล์จาก fetch_yahoo.py แทน");
+  }finally{ $("btnFetch").disabled = false; }
+};
+
+$("btnAddRow").onclick = ()=>{
+  $("holdTable").querySelector("tbody").appendChild(holdRow("",0));
+};
+
+/* main computation */
+$("btnRun").onclick = ()=>{
+  try{ runAll(); }catch(e){ alert("คำนวณไม่สำเร็จ: "+e); console.error(e); }
+};
+
+function runAll(){
+  saveState();
+  const {names, dates, P} = DATA;
+  const ppy = detectPpy(dates);
+  const rf = Number($("rf").value)/100;
+  const hi = Number($("maxW").value)/100;
+  const st = computeStats(P, ppy);
+  const fr = efficientFrontier(st.mu, st.cov, 0, hi, 60, rf);
+
+  // current portfolio
+  const holds = readHoldings();
+  const units = names.map(n=>{
+    const h = holds.find(([hn])=> hn.toLowerCase()===n.toLowerCase());
+    return h ? h[1] : 0;
+  });
+  const last = P[P.length-1];
+  const curVal = units.map((u,j)=>u*last[j]);
+  const curTot = curVal.reduce((a,b)=>a+b,0);
+  const wCur = curTot>0 ? curVal.map(v=>v/curTot) : null;
+  const missing = holds.filter(([hn])=> !names.some(n=>n.toLowerCase()===hn.toLowerCase()))
+                       .map(([hn])=>hn);
+
+  CALC = {names, dates, P, ppy, rf, hi, st, fr, units, last, wCur, curTot, missing};
+  renderStats(); renderCorr(); renderCards();
+  $("riskSlider").max = fr.points.length-1;
+  $("riskSlider").value = fr.points.indexOf(fr.ms);
+  renderChart(); renderSlider(); renderRebalance();
+  $("results").classList.remove("hidden");
+  $("results").scrollIntoView({behavior:"smooth"});
+}
+
+function renderStats(){
+  const {names, P, ppy, rf, st} = CALC;
+  const T = P.length-1;
+  let html = "<thead><tr><th>สินทรัพย์</th><th>ผลตอบแทน/ปี</th><th>CAGR</th><th>ผันผวน/ปี</th><th>Sharpe</th><th>MaxDD</th></tr></thead><tbody>";
+  names.forEach((n,j)=>{
+    const col = P.map(r=>r[j]);
+    const sh = st.vol[j]>1e-12 ? (st.mu[j]-rf)/st.vol[j] : NaN;
+    html += `<tr><td>${n}</td><td>${pct(st.mu[j])}</td><td>${pct(cagr(col,T,ppy))}</td>
+      <td>${pct(st.vol[j])}</td><td>${sh.toFixed(2)}</td>
+      <td class="neg">${pct(maxDrawdown(col))}</td></tr>`;
+  });
+  $("statTable").innerHTML = html+"</tbody>";
+}
+function corrColor(c){
+  if(c>=0.999) return "#eef1f5";
+  const t = (c+1)/2; // 0..1
+  const h = 140-(t*140); // 140 green -> 0 red
+  return `hsl(${h} 65% ${88-Math.abs(c)*8}%)`;
+}
+function renderCorr(){
+  const {names, st} = CALC;
+  let html = "<thead><tr><th></th>"+names.map(n=>`<th>${n}</th>`).join("")+"</tr></thead><tbody>";
+  names.forEach((n,a)=>{
+    html += `<tr><td><b>${n}</b></td>`+names.map((_,b)=>
+      `<td style="background:${corrColor(st.corr[a][b])}">${st.corr[a][b].toFixed(2)}</td>`).join("")+"</tr>";
+  });
+  $("corrTable").innerHTML = html+"</tbody>";
+}
+function card(title, p, hl){
+  return `<div class="kpi${hl?" hl":""}"><div class="t">${title}</div>
+    <div class="v">${pct(p.ret)} <span style="font-weight:400;color:var(--muted)">@ ${pct(p.vol)}</span></div>
+    <div class="t">Sharpe ${isFinite(p.sharpe)?p.sharpe.toFixed(2):"–"}</div></div>`;
+}
+function renderCards(){
+  const {fr, wCur, st, rf, missing} = CALC;
+  let html = card("★ Max Sharpe (แนะนำ)", fr.ms, true) + card("● ความเสี่ยงต่ำสุด (GMV)", fr.gmv, false);
+  if(wCur) html += card("■ พอร์ตปัจจุบันของคุณ", portPerf(wCur, st.mu, st.cov, rf), false);
+  $("portCards").innerHTML = html + (missing.length?
+    `<div class="kpi"><div class="t" style="color:var(--warn)">⚠ ไม่พบราคา: ${missing.join(", ")}</div></div>`:"");
+}
+
+function renderSlider(){
+  const p = CALC.fr.points[Number($("riskSlider").value)];
+  const ws = p.w.map((w,j)=>({n:CALC.names[j], w})).filter(x=>x.w>=0.0005)
+              .sort((a,b)=>b.w-a.w).map(x=>`${x.n} ${pct(x.w,1)}`).join(" · ");
+  $("sliderInfo").innerHTML =
+    `<b>จุดที่เลือก:</b> ผลตอบแทน ${pct(p.ret)} · ผันผวน ${pct(p.vol)} · Sharpe ${p.sharpe.toFixed(2)} &nbsp; <span class="note">${ws}</span>`;
+  renderChart(); renderRebalance();
+}
+$("riskSlider").addEventListener("input", renderSlider);
+$("targetSrc").addEventListener("change", renderRebalance);
+["rf","maxW"].forEach(id=> $(id).addEventListener("change", ()=>{ if(CALC) runAll(); }));
+["cash","lot","minTrade"].forEach(id=> $(id).addEventListener("change", ()=>{ if(CALC) renderRebalance(); }));
+
+/* chart */
+function renderChart(){
+  const cv = $("chart"), ctx = cv.getContext("2d");
+  const {st, fr, rf, wCur, hi} = CALC;
+  const W = cv.width, H = cv.height, mL=70, mR=20, mT=26, mB=52;
+  ctx.clearRect(0,0,W,H);
+  ctx.font = "13px Segoe UI, Tahoma";
+
+  // Monte Carlo cloud (long-only dirichlet-ish, respecting cap loosely)
+  const n = st.mu.length, rng = mulberry(20260520);
+  const cloud = [];
+  for(let k=0;k<3000;k++){
+    let w = Array.from({length:n},()=> -Math.log(rng()||1e-12));
+    const s = w.reduce((a,b)=>a+b,0); w = w.map(x=>x/s);
+    const p = portPerf(w, st.mu, st.cov, rf);
+    cloud.push(p);
+  }
+  const xs = cloud.map(p=>p.vol).concat(fr.points.map(p=>p.vol), st.vol);
+  const ys = cloud.map(p=>p.ret).concat(fr.points.map(p=>p.ret), st.mu, [rf]);
+  if(wCur){ const c = portPerf(wCur, st.mu, st.cov, rf); xs.push(c.vol); ys.push(c.ret); }
+  const x0=0, x1=Math.max(...xs)*1.06, yPad=(Math.max(...ys)-Math.min(...ys))*0.08;
+  const y0=Math.min(...ys)-yPad, y1=Math.max(...ys)+yPad;
+  const X = v=> mL + (v-x0)/(x1-x0)*(W-mL-mR);
+  const Y = v=> H-mB - (v-y0)/(y1-y0)*(H-mT-mB);
+
+  // grid + axes
+  ctx.strokeStyle="#eceff3"; ctx.fillStyle="#68727f"; ctx.textAlign="center";
+  const xt = niceTicks(x0,x1,8), yt = niceTicks(y0,y1,8);
+  for(const t of xt){ ctx.beginPath(); ctx.moveTo(X(t),mT); ctx.lineTo(X(t),H-mB); ctx.stroke();
+    ctx.fillText(pct(t,0), X(t), H-mB+18); }
+  ctx.textAlign="right";
+  for(const t of yt){ ctx.beginPath(); ctx.moveTo(mL,Y(t)); ctx.lineTo(W-mR,Y(t)); ctx.stroke();
+    ctx.fillText(pct(t,0), mL-8, Y(t)+4); }
+  ctx.strokeStyle="#9aa3ad"; ctx.strokeRect(mL,mT,W-mL-mR,H-mT-mB);
+  ctx.textAlign="center"; ctx.fillStyle="#1c2430";
+  ctx.fillText("ความผันผวนต่อปี (ความเสี่ยง)", (mL+W-mR)/2, H-8);
+  ctx.save(); ctx.translate(16,(mT+H-mB)/2); ctx.rotate(-Math.PI/2);
+  ctx.fillText("ผลตอบแทนคาดหวังต่อปี", 0,0); ctx.restore();
+
+  // cloud colored by sharpe
+  const shs = cloud.map(p=>p.sharpe).filter(isFinite);
+  const s0=Math.min(...shs), s1=Math.max(...shs);
+  for(const p of cloud){
+    const t=(p.sharpe-s0)/((s1-s0)||1);
+    ctx.fillStyle = `hsla(${250-190*t} 70% 55% / .30)`;
+    ctx.fillRect(X(p.vol)-1.2, Y(p.ret)-1.2, 2.4, 2.4);
+  }
+  // CML
+  const ms = fr.ms;
+  ctx.strokeStyle="#9aa3ad"; ctx.setLineDash([6,5]); ctx.beginPath();
+  const cy = x => rf + ms.sharpe*x;
+  let drawn=false;
+  for(let x=x0;x<=x1;x+= (x1-x0)/200){
+    const y = cy(x); if(y<y0||y>y1) { if(drawn) break; else continue; }
+    if(!drawn){ ctx.moveTo(X(x),Y(y)); drawn=true; } else ctx.lineTo(X(x),Y(y));
+  }
+  ctx.stroke(); ctx.setLineDash([]);
+  // frontier
+  ctx.strokeStyle="#d3264a"; ctx.lineWidth=2.4; ctx.beginPath();
+  fr.points.forEach((p,i)=> i? ctx.lineTo(X(p.vol),Y(p.ret)) : ctx.moveTo(X(p.vol),Y(p.ret)));
+  ctx.stroke(); ctx.lineWidth=1;
+  // assets
+  ctx.fillStyle="#111"; ctx.textAlign="left";
+  CALC.names.forEach((nm,j)=>{
+    const x=X(st.vol[j]), y=Y(st.mu[j]);
+    ctx.save(); ctx.translate(x,y); ctx.rotate(Math.PI/4); ctx.fillRect(-4,-4,8,8); ctx.restore();
+    ctx.fillText(nm, x+7, y+4);
+  });
+  // GMV
+  dotMark(ctx, X(fr.gmv.vol), Y(fr.gmv.ret), "#2563eb");
+  // current portfolio
+  if(wCur){ const c=portPerf(wCur,st.mu,st.cov,rf);
+    ctx.fillStyle="#7c3aed"; ctx.fillRect(X(c.vol)-5,Y(c.ret)-5,10,10);
+    ctx.fillStyle="#7c3aed"; ctx.textAlign="left"; ctx.fillText("พอร์ตปัจจุบัน", X(c.vol)+8, Y(c.ret)-6); }
+  // selected
+  const sel = fr.points[Number($("riskSlider").value)];
+  ctx.strokeStyle="#0a8f4d"; ctx.lineWidth=3; ctx.beginPath();
+  ctx.arc(X(sel.vol),Y(sel.ret),9,0,Math.PI*2); ctx.stroke(); ctx.lineWidth=1;
+  // max sharpe star
+  star(ctx, X(ms.vol), Y(ms.ret), 11, "#f59e0b");
+  // legend
+  ctx.textAlign="left"; const lx=mL+12; let ly=mT+16; ctx.fillStyle="#1c2430";
+  ctx.fillStyle="#d3264a"; ctx.fillRect(lx,ly-4,18,3); ctx.fillStyle="#1c2430"; ctx.fillText("เส้น Efficient Frontier", lx+24, ly); ly+=19;
+  star(ctx, lx+9, ly-4, 7, "#f59e0b"); ctx.fillStyle="#1c2430"; ctx.fillText("Max Sharpe (แตะเส้นตลาดทุน)", lx+24, ly); ly+=19;
+  dotMark(ctx, lx+9, ly-4, "#2563eb"); ctx.fillStyle="#1c2430"; ctx.fillText("ความเสี่ยงต่ำสุด (GMV)", lx+24, ly); ly+=19;
+  ctx.fillStyle="#7c3aed"; ctx.fillRect(lx+4,ly-9,10,10); ctx.fillStyle="#1c2430"; ctx.fillText("พอร์ตปัจจุบัน", lx+24, ly);
+}
+function dotMark(ctx,x,y,color){ ctx.fillStyle=color; ctx.beginPath(); ctx.arc(x,y,6,0,Math.PI*2);
+  ctx.fill(); ctx.strokeStyle="#fff"; ctx.stroke(); }
+function star(ctx,x,y,r,color){
+  ctx.fillStyle=color; ctx.beginPath();
+  for(let i=0;i<10;i++){ const a=-Math.PI/2 + i*Math.PI/5, rr = i%2? r*0.45 : r;
+    ctx[i?"lineTo":"moveTo"](x+rr*Math.cos(a), y+rr*Math.sin(a)); }
+  ctx.closePath(); ctx.fill(); ctx.strokeStyle="#7a5200"; ctx.stroke();
+}
+function niceTicks(a,b,n){
+  const span=(b-a)/n, mag=Math.pow(10,Math.floor(Math.log10(span)));
+  const step=[1,2,2.5,5,10].map(m=>m*mag).find(s=>span<=s)||10*mag;
+  const out=[]; for(let v=Math.ceil(a/step)*step; v<=b+1e-12; v+=step) out.push(v);
+  return out;
+}
+function mulberry(seed){ let a=seed>>>0; return ()=>{ a|=0; a=a+0x6D2B79F5|0;
+  let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t;
+  return ((t^t>>>14)>>>0)/4294967296; }; }
+
+/* rebalance */
+function targetWeights(){
+  const src = $("targetSrc").value;
+  if(src==="gmv") return CALC.fr.gmv.w;
+  if(src==="sel") return CALC.fr.points[Number($("riskSlider").value)].w;
+  return CALC.fr.ms.w;
+}
+function renderRebalance(){
+  if(!CALC) return;
+  const {names, last, units, st, rf} = CALC;
+  const wT = targetWeights();
+  let plan;
+  try{
+    plan = planRebalance({names, last, units, wTarget: wT,
+      cash:Number($("cash").value)||0, lot:Number($("lot").value)||0,
+      minTrade:Number($("minTrade").value)||0});
+  }catch(e){ $("rebNote").textContent = "✖ "+e; $("rebNote").className="status err"; return; }
+
+  let html = `<thead><tr><th>สินทรัพย์</th><th>ราคา</th><th>ถืออยู่</th><th>มูลค่า</th>
+    <th>ตอนนี้</th><th>เป้าหมาย</th><th>คำสั่ง</th><th>จำนวน</th><th>มูลค่าซื้อ/ขาย</th></tr></thead><tbody>`;
+  names.forEach((n,j)=>{
+    const act = plan.tVal[j]>0.004? "buy" : plan.tVal[j]<-0.004? "sell" : "hold";
+    const lbl = {buy:"ซื้อ", sell:"ขาย", hold:"–"}[act];
+    html += `<tr><td>${n}</td><td>${thb(last[j])}</td><td>${units[j].toLocaleString()}</td>
+      <td>${thb(plan.curVal[j])}</td>
+      <td>${plan.totalNow>0?pct(plan.curVal[j]/plan.totalNow,1):"–"}</td>
+      <td><b>${pct(wT[j],1)}</b></td>
+      <td><span class="pill ${act}">${lbl}</span></td>
+      <td>${act==="hold"?"–":(plan.tUnits[j]>0?"+":"")+plan.tUnits[j].toLocaleString(undefined,{maximumFractionDigits:2})}</td>
+      <td class="${act==='buy'?'pos':act==='sell'?'neg':''}">${act==="hold"?"–":(plan.tVal[j]>0?"+":"")+thb(plan.tVal[j])}</td></tr>`;
+  });
+  $("rebTable").innerHTML = html+"</tbody>";
+
+  const before = CALC.wCur ? portPerf(CALC.wCur, st.mu, st.cov, rf) : null;
+  const after = portPerf(plan.wAfter, st.mu, st.cov, rf);
+  let msg = `มูลค่าพอร์ต ${thb(plan.totalNow)} บาท` +
+    (Number($("cash").value)? ` · เงินเติม/ถอน ${thb(Number($("cash").value))}` : "") +
+    ` → จัดสรร ${thb(plan.totalTarget)} บาท\n`;
+  if(before) msg += `ก่อนปรับ: ผลตอบแทนคาดหวัง ${pct(before.ret)} @ ผันผวน ${pct(before.vol)} (Sharpe ${before.sharpe.toFixed(2)})\n`;
+  msg += `หลังปรับ: ผลตอบแทนคาดหวัง ${pct(after.ret)} @ ผันผวน ${pct(after.vol)} (Sharpe ${after.sharpe.toFixed(2)})`;
+  if(plan.residual >= 0.005) msg += `\nเงินสดคงเหลือหลังเทรด (เศษจากการปัดล็อต): ${thb(plan.residual)} บาท`;
+  else if(plan.residual <= -0.005) msg += `\n⚠ การปัดล็อตทำให้ต้องใช้เงินเพิ่ม ${thb(-plan.residual)} บาท — ตัดคำสั่งซื้อลง 1 ล็อต หรือเติมเงินเท่านี้`;
+  $("rebNote").textContent = msg; $("rebNote").className="status";
+}
+
+/* CSV export */
+function download(name, text){
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["﻿"+text],{type:"text/csv;charset=utf-8"}));
+  a.download = name; a.click(); URL.revokeObjectURL(a.href);
+}
+$("btnCsvW").onclick = ()=>{
+  if(!CALC) return;
+  const wT = targetWeights();
+  download("weights.csv", "asset,weight\n"+CALC.names.map((n,j)=>`${n},${wT[j].toFixed(6)}`).join("\n"));
+};
+$("btnCsvO").onclick = ()=>{
+  if(!CALC) return;
+  const {names,last,units} = CALC;
+  const wT = targetWeights();
+  const plan = planRebalance({names,last,units,wTarget:wT,
+    cash:Number($("cash").value)||0, lot:Number($("lot").value)||0, minTrade:Number($("minTrade").value)||0});
+  let csv = "asset,action,units,price,value\n";
+  names.forEach((n,j)=>{
+    if(Math.abs(plan.tVal[j])<0.005) return;
+    csv += `${n},${plan.tVal[j]>0?"BUY":"SELL"},${plan.tUnits[j]},${last[j]},${plan.tVal[j].toFixed(2)}\n`;
+  });
+  download("orders.csv", csv);
+};
+
+initHoldings();
+</script>
+</body>
+</html>
