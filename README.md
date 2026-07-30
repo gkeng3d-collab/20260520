@@ -39,3 +39,9 @@
 2. Copy `SAPUILandscape.xml`
 3. บนเครื่องใหม่ วางไฟล์ที่ `%APPDATA%\SAP\Common\`
 4. เปิด SAP Logon ใหม่
+
+---
+
+## เครื่องมืออื่นใน repo นี้
+
+- [`stock-technical/`](stock-technical/) — 📈 โปรแกรมแสดงกราฟเทคนิคราคาหุ้น (Candlestick + SMA/EMA/Bollinger/RSI/MACD/Volume พร้อมสรุปสัญญาณ)
