@@ -6,11 +6,13 @@
 วิธีใช้:
     python3 screen_set_stocks.py <path ไฟล์ listSET_YYYYMMDD.xlsx> [ไฟล์ผลลัพธ์.xlsx]
 
-กลยุทธ์ 4 แบบ:
+กลยุทธ์ 5 แบบ:
   A) Momentum  — เทรนด์ขาขึ้นแข็งแรง โมเมนตัมดี ยังไม่ overbought
   B) Breakout  — เพิ่งทะลุฐาน/แนวต้าน หรือเพิ่งเกิดสัญญาณซื้อใหม่ พร้อมวอลุ่มยืนยัน
   C) Pullback  — ขาขึ้นใหญ่ (รายสัปดาห์) ยังดี แต่รายวันย่อลงมาใกล้แนวรับ EMA26
   D) MCDX      — แรงซื้อรายใหญ่ (MCDX แถบแดง) สูงและกำลังเพิ่มขึ้น
+  E) ต้นรอบ    — ราคาย่อลึกในรอบใหญ่ (fibo) + RSI สัปดาห์ยังต่ำ + MCDX เริ่มมีแดง
+                 + เพิ่งมีสัญญาณเบรกครั้งแรก (ใช้ universe ผ่อนสภาพคล่อง เพราะก้นรอบวอลุ่มเบา)
 
 พร้อมชีท "ย้ายโซน RSI" จับหุ้นที่เพิ่งเปลี่ยนโซน RSI วัน/สัปดาห์ ทั้งฝั่งฟื้นตัวและฝั่งอ่อนแรง
 (zone1 อ่อนทั้งวัน+สัปดาห์ | zone2 วันเด้ง สัปดาห์ยังอ่อน | zone3 แข็งทั้งคู่ | zone4 ย่อในขาขึ้นใหญ่)
@@ -33,6 +35,18 @@ MIN_FREEFLOAT = 15.0    # free float ขั้นต่ำ (%)
 MIN_PRICE = 1.0         # กันหุ้นต่ำบาทที่ tick กระโดดแรงเป็น % มาก
 
 
+def _derive(u: pd.DataFrame) -> pd.DataFrame:
+    u['vol_ratio'] = u['volume'] / u['VolMA25']
+    u['ValMA25_M'] = u['ValMA25'] / 1e6
+    u['Mcap_B'] = u['Mcap'] / 1e9
+    u['ticker'] = u['symbol'].str.replace('SET:', '', regex=False)
+    u['stop_2ATR'] = u['close_minus_2ATR']
+    u['stop_dist%'] = (u['close'] - u['stop_2ATR']) / u['close'] * 100
+    u['EMA26_price'] = (u['close'] / (1 + u['EMA26%C'] / 100)).round(2)
+    u['dMCDX5'] = u['MCDX_red'] - u['MCDX_red-5']   # แรงรายใหญ่เปลี่ยนแปลงใน 5 แท่ง
+    return u
+
+
 def load_universe(df: pd.DataFrame) -> pd.DataFrame:
     u = df[
         (df['data_quality_ok'] == True)  # noqa: E712
@@ -43,15 +57,7 @@ def load_universe(df: pd.DataFrame) -> pd.DataFrame:
         & (df['freefloatShares%'].fillna(0) >= MIN_FREEFLOAT)
         & (df['close'] >= MIN_PRICE)
     ].copy()
-    u['vol_ratio'] = u['volume'] / u['VolMA25']
-    u['ValMA25_M'] = u['ValMA25'] / 1e6
-    u['Mcap_B'] = u['Mcap'] / 1e9
-    u['ticker'] = u['symbol'].str.replace('SET:', '', regex=False)
-    u['stop_2ATR'] = u['close_minus_2ATR']
-    u['stop_dist%'] = (u['close'] - u['stop_2ATR']) / u['close'] * 100
-    u['EMA26_price'] = (u['close'] / (1 + u['EMA26%C'] / 100)).round(2)
-    u['dMCDX5'] = u['MCDX_red'] - u['MCDX_red-5']   # แรงรายใหญ่เปลี่ยนแปลงใน 5 แท่ง
-    return u
+    return _derive(u)
 
 
 def setup_momentum(u: pd.DataFrame) -> pd.Series:
@@ -117,6 +123,48 @@ def setup_mcdx(u: pd.DataFrame) -> pd.Series:
 
 BULL_ZONE_MOVES = ['zone1 -> zone2', 'zone2 -> zone3', 'zone1 -> zone3', 'zone4 -> zone3']
 BEAR_ZONE_MOVES = ['zone3 -> zone1', 'zone4 -> zone1', 'zone3 -> zone4', 'zone2 -> zone1']
+
+
+# ---------- Setup E: ต้นรอบ (Early cycle) — universe ผ่อนสภาพคล่อง ----------
+EARLY_MIN_TURNOVER_M = 5.0
+EARLY_MIN_MCAP_B = 2.0
+
+
+def early_cycle_screen(df: pd.DataFrame) -> pd.DataFrame:
+    """ราคาย่อลึกในรอบใหญ่ + RSI สัปดาห์ยังต่ำ + MCDX เริ่มมีแดง + เพิ่งมีสัญญาณเบรกแรก
+    หมายเหตุ: เป็นการเข้าสวนเทรนด์ระยะกลาง อัตราล้มเหลวสูงกว่ากลยุทธ์ตามเทรนด์
+    ควรใช้ไม้เล็ก รอวอลุ่ม/MCDX มายืนยันก่อนเพิ่มไม้"""
+    u = _derive(df[
+        (df['data_quality_ok'] == True)  # noqa: E712
+        & (df['bars_stale'] == 0)
+        & (df['ValMA25'] / 1e6 >= EARLY_MIN_TURNOVER_M)
+        & (df['Mcap'] / 1e9 >= EARLY_MIN_MCAP_B)
+        & (df['freefloatShares%'].fillna(0) >= MIN_FREEFLOAT)
+        & (df['close'] >= 0.5)
+    ].copy())
+
+    deep = (u['P_fibo_240'] >= 50) | (u['P_fibo_120'] >= 61.8)   # ย่อเกินครึ่งของรอบใหญ่
+    rsi_low = u['RSI14W'] < 55                                   # รายสัปดาห์ยังไม่ร้อน = ยังต้นทาง
+    mcdx_on = (u['MCDX_red'] > 0) | (u['MCDX_max_red'] >= 5)     # แถบแดงเริ่มโผล่
+    fresh_today = (u['BreakPMax10'] | u['BreakPMax20'] | u['BreakPMax25']
+                   | u['BreakMaxclose20'] | u['BreakMaxclose25']
+                   | u['EMA26_break'] | u['CDC_break'] | u['MACD_cross_up'])
+    fresh_recent = (u['bars_since_CDC_green'].le(10) | u['bars_since_EMA26_break'].le(10)
+                    | u['bars_since_MACD_cross'].le(10))         # สัญญาณแรกภายใน 10 แท่ง
+    ok = (u['EMA26%C'].between(-3, 8)) & (u['ret_1d'] > -2) & (u['ret_60d'] < 25)
+
+    r = u[deep & rsi_low & mcdx_on & (fresh_today | fresh_recent) & ok].copy()
+    age = r[['bars_since_CDC_green', 'bars_since_EMA26_break', 'bars_since_MACD_cross']].min(axis=1)
+    r['signal_age'] = age
+    r['early_score'] = (
+        r[['P_fibo_240', 'P_fibo_120']].max(axis=1).clip(0, 100) / 100 * 25  # ยิ่งลึก R/R ยิ่งดี
+        + r['MCDX_red'].clip(0, 10) / 10 * 15                                # เจ้าเข้าแล้วแค่ไหน
+        + r['dMCDX5'].clip(0, 5) / 5 * 10                                    # และกำลังเพิ่มไหม
+        + r['vol_ratio'].clip(0, 3) / 3 * 20                                 # วอลุ่มตื่นหรือยัง
+        + (10 - age.fillna(10).clip(0, 10)) / 10 * 20                        # สัญญาณยิ่งสดยิ่งต้น
+        + (55 - r['RSI14W']).clip(0, 25) / 25 * 10                           # ยิ่งต่ำ upside ยิ่งเหลือ
+    ).round(1)
+    return r.sort_values('early_score', ascending=False)
 
 
 # ---------- Market breadth (คำนวณจากหุ้นทั้งไฟล์) ----------
@@ -325,8 +373,58 @@ def _write_market_sheet(ws, breadth_rows: list, verdict: str, sec: pd.DataFrame)
         ws.column_dimensions[col].width = w
 
 
+E_HDR = ['หุ้น', 'ราคาปิด', 'คะแนนต้นรอบ', 'ย่อจาก high 240 วัน %', 'ย่อจาก high 120 วัน %',
+         'โซน RSI', 'ย้ายโซน', 'RSI วัน', 'RSI สัปดาห์', 'MCDX แดง', 'ΔMCDX 5 แท่ง',
+         'วอลุ่ม/เฉลี่ย 25 วัน (เท่า)', 'อายุสัญญาณ (แท่ง)', 'ห่าง EMA26 %',
+         'ผลตอบแทน 20 วัน %', 'ผลตอบแทน 60 วัน %', 'จุดตัดขาดทุน (2ATR)',
+         'มูลค่าซื้อขายเฉลี่ย 25 วัน (ลบ.)', 'มูลค่าตลาด (พันลบ.)', 'กลุ่มธุรกิจ', 'คำเตือน']
+
+
+def _write_early_sheet(ws, rows: pd.DataFrame):
+    th_font = Font(name=ARIAL, bold=True, color='FFFFFF', size=10)
+    th_fill = PatternFill('solid', fgColor='7C3A00')
+    cell_font = Font(name=ARIAL, size=10)
+    warn_fill = PatternFill('solid', fgColor='FFF2CC')
+    thin = Side(style='thin', color='D9D9D9')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    note = ('เข้าสวนเทรนด์ระยะกลาง — อัตราล้มเหลวสูงกว่ากลยุทธ์ตามเทรนด์ '
+            'ใช้ไม้เล็ก (pilot) ตัดขาดทุนเคร่งครัด แล้วค่อยเพิ่มไม้เมื่อวอลุ่มและ MCDX มายืนยัน')
+    c = ws.cell(1, 1, 'E-ต้นรอบ: ' + note)
+    c.font = Font(name=ARIAL, bold=True, size=10, color='7C3A00')
+    ws.freeze_panes = 'C3'
+    for j, h in enumerate(E_HDR, 1):
+        c = ws.cell(2, j, h)
+        c.font, c.fill, c.border = th_font, th_fill, border
+        c.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    for i, (_, r) in enumerate(rows.iterrows(), 3):
+        zmove = '' if r['RSIzoneMove'] == 'Not move' else r['RSIzoneMove']
+        vals = [r['ticker'], r['close'], r['early_score'],
+                round(r['P_fibo_240'], 1) if pd.notna(r['P_fibo_240']) else None,
+                round(r['P_fibo_120'], 1) if pd.notna(r['P_fibo_120']) else None,
+                r['RSIzone'], zmove, round(r['RSI14'], 1), round(r['RSI14W'], 1),
+                round(r['MCDX_red'], 1), round(r['dMCDX5'], 1), round(r['vol_ratio'], 2),
+                int(r['signal_age']) if pd.notna(r['signal_age']) else None,
+                round(r['EMA26%C'], 2), round(r['ret_20d'], 2), round(r['ret_60d'], 2),
+                round(r['stop_2ATR'], 2), round(r['ValMA25_M'], 1), round(r['Mcap_B'], 1),
+                r['sector'], r['คำเตือน']]
+        for j, v in enumerate(vals, 1):
+            c = ws.cell(i, j, v)
+            c.font, c.border = cell_font, border
+            if isinstance(v, float):
+                c.number_format = '#,##0.00'
+        if r['คำเตือน']:
+            for j in range(1, len(E_HDR) + 1):
+                ws.cell(i, j).fill = warn_fill
+    widths = [8, 9, 10, 11, 11, 8, 14, 8, 9, 9, 9, 11, 10, 9, 10, 10, 11, 12, 10, 22, 34]
+    for j, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(j)].width = w
+    ws.row_dimensions[2].height = 42
+
+
 def build_report(u: pd.DataFrame, out_path: str, asof: str, set_close: float, set_chg20: float,
-                 n_total: int, breadth_rows: list, verdict: str, sec: pd.DataFrame):
+                 n_total: int, breadth_rows: list, verdict: str, sec: pd.DataFrame,
+                 early: pd.DataFrame):
     wb = Workbook()
     ws = wb.active
     ws.title = 'อ่านก่อน (เกณฑ์)'
@@ -352,6 +450,10 @@ def build_report(u: pd.DataFrame, out_path: str, asof: str, set_close: float, se
         (f"D-MCDX เจ้าเก็บของ ({counts['D-MCDX']} ตัว)",
          'MCDX แถบแดง (ประมาณแรงซื้อรายใหญ่/banker) ≥ 10 และเพิ่มขึ้นเทียบ 5 แท่งก่อน + วันล่าสุดไม่โดนทุบแรง '
          '— เรียงตามแรง MCDX | ระวังตัวที่ราคายืดไกลเส้นค่าเฉลี่ยแล้ว อย่าไล่ราคา รอย่อค่อยเข้า'),
+        (f'E-ต้นรอบ ({len(early)} ตัว)',
+         'ย่อลึกเกิน 50% ของรอบ 240 วัน (หรือ 61.8% ของ 120 วัน) + RSI สัปดาห์ < 55 + MCDX แถบแดงเริ่มโผล่ '
+         '+ เพิ่งมีสัญญาณเบรกแรกภายใน 10 แท่ง (ทะลุ high 10-25 วัน / CDC / MACD / EMA26) + ยังไม่ยืดเกิน 8% '
+         '| ใช้ universe ผ่อนสภาพคล่อง (≥5 ลบ./วัน, Mcap ≥2 พันลบ.) เพราะก้นรอบวอลุ่มมักเบา — ไม้เล็ก รอวอลุ่มยืนยันก่อนเพิ่ม'),
         ('คะแนนรวม (composite)',
          'SCORE จากไฟล์ 25% + RS rank 20/60 วัน 30% + ADX 10 + RSI สัปดาห์ 5 + MACD เร่งขึ้น 5 '
          '+ วอลุ่มเข้า 10 + แรงซื้อรายใหญ่ MCDX 10 − โทษ divergence/ยืดตัว'),
@@ -395,6 +497,7 @@ def build_report(u: pd.DataFrame, out_path: str, asof: str, set_close: float, se
         _write_sheet(wb.create_sheet(name), sub)
     dsub = u[u['setups'].str.contains('D-MCDX')].sort_values('MCDX_red', ascending=False)
     _write_sheet(wb.create_sheet('D-MCDX เจ้าเก็บของ'), dsub)
+    _write_early_sheet(wb.create_sheet('E-ต้นรอบ'), early)
     zmoves = u[u['RSIzoneMove'].isin(BULL_ZONE_MOVES + BEAR_ZONE_MOVES)].copy()
     zmoves['_dir'] = np.where(zmoves['RSIzoneMove'].isin(BULL_ZONE_MOVES), 0, 1)
     zmoves = zmoves.sort_values(['_dir', 'composite'], ascending=[True, False])
@@ -449,8 +552,17 @@ def main():
     print(f"\nย้ายโซนขาขึ้น: {u.loc[u['RSIzoneMove'].isin(BULL_ZONE_MOVES), 'ticker'].tolist()}")
     print(f"ย้ายโซนขาลง: {u.loc[u['RSIzoneMove'].isin(BEAR_ZONE_MOVES), 'ticker'].tolist()}")
 
+    early = early_cycle_screen(df)
+    early['คำเตือน'] = warnings_col(early)
+    print(f'\n===== E-ต้นรอบ: {len(early)} ตัว (universe ผ่อนสภาพคล่อง) =====')
+    if len(early):
+        ecols = ['ticker', 'close', 'early_score', 'P_fibo_240', 'P_fibo_120', 'RSIzone',
+                 'RSI14W', 'MCDX_red', 'dMCDX5', 'vol_ratio', 'signal_age', 'EMA26%C',
+                 'ret_60d', 'ValMA25_M', 'sector']
+        print(early[ecols].round(2).to_string(index=False))
+
     build_report(u, out, asof, df['SET_close'].iloc[0], df['SET_chg_20d'].iloc[0], len(df),
-                 breadth_rows, verdict, sec)
+                 breadth_rows, verdict, sec, early)
     print(f'\nบันทึกรายงานที่ {out}')
 
 
