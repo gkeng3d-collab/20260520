@@ -57,6 +57,24 @@ python fgo_dialogue.py --from-file sample/sample_script.txt
 - `？１：ข้อความ` = ตัวเลือกของผู้เล่น, `？！` = จบชุดตัวเลือก
 - มาร์กอัปในข้อความ: `[r]`=ขึ้นบรรทัด, `[%1]`=ชื่อผู้เล่น, `[#คำ:เสียงอ่าน]`=ฟุริงานะ, `[&ชาย:หญิง]`=ข้อความตามเพศ, `[servantName id:ชื่อปิดบัง:ชื่อจริง]`, ส่วนคำสั่งฉาก/เสียง (`[charaSet ...]`, `[bgm ...]`, `[se ...]` ฯลฯ) จะถูกตัดทิ้ง
 
+## อีเวนต์โอโอคุ (徳川回天迷宮 大奥) + โหมด Lorebook
+
+อีเวนต์ **Tokugawa Restoration Labyrinth: Ōoku** ใช้ **war id 9080** (มีทั้ง JP และ NA เพราะถูกทำเป็น Main Interlude ถาวรแล้ว)
+
+- อ่านออนไลน์: https://apps.atlasacademy.io/db/NA/war/9080 (อังกฤษ) / https://apps.atlasacademy.io/db/JP/war/9080 (ญี่ปุ่น)
+
+```bash
+# ดึงบทสนทนาทั้งอีเวนต์ + สร้าง lorebook.json (รูปแบบ SillyTavern World Info) อัตโนมัติ
+python fgo_dialogue.py --region NA --war 9080 --lorebook
+
+# หรือสร้าง lorebook จากโฟลเดอร์ที่ดาวน์โหลดไว้แล้ว
+python fgo_dialogue.py --lorebook-from output/NA/war9080 --lorebook-title "FGO Ooku"
+```
+
+lorebook ที่ได้จะมี entry แรกเป็นภาพรวม (constant) และ entry ละหนึ่งตอน โดย key คือชื่อเควสกับชื่อตัวละครที่พูดในตอนนั้น เนื้อหาเป็น transcript เต็ม
+
+นอกจากนี้มี **lorebook ฉบับเรียบเรียง** `lorebook/ooku_lorebook.json` — 12 entries สรุป lore ของอีเวนต์ (ฉาก/เขาวงกต/Kama/Parvati/Kiara/春日局 ฯลฯ เป็นภาษาอังกฤษ พร้อม key ทั้ง EN/JP/ไทย) เขียนจากข้อมูลสาธารณะ ไม่ใช่ข้อความเกมตรง ๆ — ใช้คู่กับ lorebook แบบ transcript ได้เลย
+
 ## หมายเหตุ
 
 - ภาษาที่มี: JP (ญี่ปุ่น ครบทุกบท), NA (อังกฤษ เท่าที่ลงเซิร์ฟ NA แล้ว), CN/TW/KR — ไม่มีภาษาไทยเพราะเกมไม่มีแปลไทยทางการ

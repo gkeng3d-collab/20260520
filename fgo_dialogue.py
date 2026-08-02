@@ -254,6 +254,105 @@ def format_blocks(blocks: list[Block]) -> str:
     return "\n\n".join(out) + "\n"
 
 
+# -------------------------------------------------------------- lorebook mode
+# SillyTavern "World Info" (V2) JSON. Each downloaded script becomes one entry
+# keyed by its quest name and the speakers appearing in it.
+
+ST_ENTRY_DEFAULTS = {
+    "keysecondary": [], "constant": False, "vectorized": False,
+    "selective": True, "selectiveLogic": 0, "addMemo": True, "order": 100,
+    "position": 0, "disable": False, "excludeRecursion": False,
+    "preventRecursion": False, "delayUntilRecursion": False,
+    "probability": 100, "useProbability": True, "depth": 4, "group": "",
+    "groupOverride": False, "groupWeight": 100, "scanDepth": None,
+    "caseSensitive": None, "matchWholeWords": None, "useGroupScoring": None,
+    "automationId": "", "role": None, "sticky": 0, "cooldown": 0, "delay": 0,
+}
+
+
+def speaker_keys(speaker: str) -> list[str]:
+    """'？？？（マシュ・キリエライト）' → both hidden and true names."""
+    match = re.match(r"^(.*?)（(.+?)）$", speaker)
+    names = [match.group(1), match.group(2)] if match else [speaker]
+    return [n for n in names if n and n != "？？？"]
+
+
+def section_speakers(blocks: list[Block]) -> list[str]:
+    seen: list[str] = []
+    for block in blocks:
+        if block.kind == "dialogue" and block.speaker:
+            for name in speaker_keys(block.speaker):
+                if name not in seen:
+                    seen.append(name)
+    return seen
+
+
+def build_lorebook(title: str, sections: list[dict]) -> dict:
+    entries = {}
+    toc = "\n".join(f"- {section['title']}" for section in sections)
+    entries["0"] = {
+        **ST_ENTRY_DEFAULTS, "uid": 0, "key": [], "selective": False,
+        "constant": True, "displayIndex": 0,
+        "comment": f"{title} — overview",
+        "content": f"[Story reference: {title}]\nSections in order:\n{toc}",
+    }
+    for index, section in enumerate(sections, start=1):
+        keys: list[str] = []
+        for key in [section["quest_name"], *section["speakers"]]:
+            if key and key not in keys:
+                keys.append(key)
+        entries[str(index)] = {
+            **ST_ENTRY_DEFAULTS, "uid": index, "key": keys[:10],
+            "displayIndex": index,
+            "comment": f"{section['title']} (script {section['script_id']})",
+            "content": f"[{title} — {section['title']} — transcript]\n{section['text']}",
+        }
+    return {"entries": entries}
+
+
+def write_lorebook(path: Path, title: str, sections: list[dict]):
+    path.write_text(
+        json.dumps(build_lorebook(title, sections), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    print(f"lorebook → {path}  ({len(sections)} section entries)")
+
+
+SECTION_HEADER = re.compile(
+    r"Quest (?P<quest>\d+) — (?P<name>.*) \(phase (?P<phase>\d+)\)\n"
+    r"Script (?P<script>\S+)"
+)
+
+
+def lorebook_from_dir(directory: Path, title: str | None):
+    """Rebuild a lorebook from per-script .txt files written by this tool."""
+    sections = []
+    for file in sorted(directory.glob("*.txt")):
+        if file.name.startswith("_") or file.name.endswith(".raw.txt"):
+            continue
+        text = file.read_text(encoding="utf-8")
+        match = SECTION_HEADER.search(text)
+        if not match:
+            continue
+        body = text.split("=" * 60)[-1].strip("\n")
+        speakers: list[str] = []
+        for speaker in re.findall(r"^【(.+?)】", body, re.M):
+            for name in speaker_keys(speaker):
+                if name not in speakers:
+                    speakers.append(name)
+        sections.append({
+            "title": f"{match['name']} (phase {match['phase']})",
+            "quest_name": match["name"],
+            "script_id": match["script"],
+            "speakers": speakers,
+            "text": body,
+        })
+    if not sections:
+        print(f"No section files found in {directory}")
+        return
+    write_lorebook(directory / "lorebook.json", title or directory.name, sections)
+
+
 # ------------------------------------------------------------------ API flows
 
 def iter_war_scripts(region: str, war_id: int):
@@ -267,10 +366,11 @@ def iter_war_scripts(region: str, war_id: int):
                 yield war, quest, phase_scripts["phase"], script
 
 
-def download_war(region: str, war_id: int, out_dir: Path, renderer: Renderer, keep_raw: bool):
+def download_war(region: str, war_id: int, out_dir: Path, renderer: Renderer,
+                 keep_raw: bool, lorebook: bool = False):
     out_dir.mkdir(parents=True, exist_ok=True)
     merged: list[str] = []
-    count = 0
+    sections: list[dict] = []
     war_name = ""
     for war, quest, phase, script in iter_war_scripts(region, war_id):
         war_name = war.get("longName") or war.get("name") or str(war_id)
@@ -284,16 +384,25 @@ def download_war(region: str, war_id: int, out_dir: Path, renderer: Renderer, ke
             f"Script {script_id}  |  {DB_HOST}/{region}/script/{script_id}\n"
             f"{'=' * 60}\n\n"
         )
-        body = format_blocks(parse_script(raw, region, renderer))
+        blocks = parse_script(raw, region, renderer)
+        body = format_blocks(blocks)
         file_path = out_dir / f"{quest['id']}_{phase}_{script_id}.txt"
         file_path.write_text(header + body, encoding="utf-8")
         merged.append(header + body)
-        count += 1
+        sections.append({
+            "title": f"{quest['name']} (phase {phase})",
+            "quest_name": quest["name"],
+            "script_id": script_id,
+            "speakers": section_speakers(blocks),
+            "text": body.strip("\n"),
+        })
         print(f"  {file_path}")
     if merged:
         title = f"{war_name} (war {war_id}, {region})\n\n"
         (out_dir / "_all_dialogue.txt").write_text(title + "\n".join(merged), encoding="utf-8")
-        print(f"\n{count} scripts → {out_dir}/_all_dialogue.txt")
+        print(f"\n{len(merged)} scripts → {out_dir}/_all_dialogue.txt")
+        if lorebook:
+            write_lorebook(out_dir / "lorebook.json", f"{war_name} ({region})", sections)
     else:
         print("No scripts found for this war.")
 
@@ -338,6 +447,11 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=50, help="max search results")
     parser.add_argument("--out", default="output", help="output directory")
     parser.add_argument("--raw", action="store_true", help="also keep raw script files")
+    parser.add_argument("--lorebook", action="store_true",
+                        help="with --war: also write a SillyTavern lorebook.json")
+    parser.add_argument("--lorebook-from", metavar="DIR",
+                        help="build lorebook.json from an existing output directory")
+    parser.add_argument("--lorebook-title", help="title used inside the lorebook")
     parser.add_argument("--gender", default="both", choices=["male", "female", "both"],
                         help="which protagonist-gender text variant to keep")
     parser.add_argument("--player-name", default=None, help="text used for the [%%1] placeholder")
@@ -346,6 +460,9 @@ def main() -> int:
     player = args.player_name or ("藤丸立香" if args.region == "JP" else "Ritsuka")
     renderer = Renderer(player, args.gender)
 
+    if args.lorebook_from:
+        lorebook_from_dir(Path(args.lorebook_from), args.lorebook_title)
+        return 0
     if args.from_file:
         raw = Path(args.from_file).read_text(encoding="utf-8-sig")
         print(format_blocks(parse_script(raw, args.region, renderer)), end="")
@@ -358,7 +475,7 @@ def main() -> int:
         return 0
     if args.war is not None:
         out_dir = Path(args.out) / args.region / f"war{args.war}"
-        download_war(args.region, args.war, out_dir, renderer, args.raw)
+        download_war(args.region, args.war, out_dir, renderer, args.raw, args.lorebook)
         return 0
 
     parser.print_help()
