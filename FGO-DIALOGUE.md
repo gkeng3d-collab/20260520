@@ -59,13 +59,14 @@ python fgo_dialogue.py --from-file sample/sample_script.txt
 
 ## อีเวนต์โอโอคุ (徳川回天迷宮 大奥) + โหมด Lorebook
 
-อีเวนต์ **Tokugawa Restoration Labyrinth: Ōoku** ใช้ **war id 9080** (มีทั้ง JP และ NA เพราะถูกทำเป็น Main Interlude ถาวรแล้ว)
+อีเวนต์ **Tokugawa Restoration Labyrinth: Ōoku** เคยจัดมาแล้วหลายรอบ (เปิดตัวปี 2019, รีรัน 2020, ตอนนี้ถาวรแบบ Main Interlude) แต่ละรอบเกมนับเป็นคนละ "war" ในฐานข้อมูล ใช้แผนที่เดียวกันแต่คนละ war id เท่าที่เจอ: **9080** (ตามที่ผมค้นเจอตอนแรก) และ **9136** (ตามที่ขึ้นในหน้า Scripts Search ของเว็บจริงตอนนี้) — เนื้อเรื่อง/บทพูดควรจะเหมือนกันทุก war id เพราะเป็นสคริปต์ชุดเดียวกัน ถ้า id หนึ่งใช้ไม่ได้ให้ลองอีก id
 
-- อ่านออนไลน์: https://apps.atlasacademy.io/db/NA/war/9080 (อังกฤษ) / https://apps.atlasacademy.io/db/JP/war/9080 (ญี่ปุ่น)
+- อ่านออนไลน์: https://apps.atlasacademy.io/db/NA/war/9080 (อังกฤษ) / https://apps.atlasacademy.io/db/JP/war/9136 (ญี่ปุ่น, id ปัจจุบันจากหน้าเว็บจริง)
 
 ```bash
 # ดึงบทสนทนาทั้งอีเวนต์ + สร้าง lorebook.json (รูปแบบ SillyTavern World Info) อัตโนมัติ
-python fgo_dialogue.py --region NA --war 9080 --lorebook
+python fgo_dialogue.py --region JP --war 9136 --lorebook
+# (หรือ --region NA --war 9080 ถ้า id นี้ใช้ไม่ได้)
 
 # หรือสร้าง lorebook จากโฟลเดอร์ที่ดาวน์โหลดไว้แล้ว
 python fgo_dialogue.py --lorebook-from output/NA/war9080 --lorebook-title "FGO Ooku"
