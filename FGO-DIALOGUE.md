@@ -73,7 +73,16 @@ python fgo_dialogue.py --lorebook-from output/NA/war9080 --lorebook-title "FGO O
 
 lorebook ที่ได้จะมี entry แรกเป็นภาพรวม (constant) และ entry ละหนึ่งตอน โดย key คือชื่อเควสกับชื่อตัวละครที่พูดในตอนนั้น เนื้อหาเป็น transcript เต็ม
 
-นอกจากนี้มี **lorebook ฉบับเรียบเรียง** `lorebook/ooku_lorebook.json` — 12 entries สรุป lore ของอีเวนต์ (ฉาก/เขาวงกต/Kama/Parvati/Kiara/春日局 ฯลฯ เป็นภาษาอังกฤษ พร้อม key ทั้ง EN/JP/ไทย) เขียนจากข้อมูลสาธารณะ ไม่ใช่ข้อความเกมตรง ๆ — ใช้คู่กับ lorebook แบบ transcript ได้เลย
+นอกจากนี้มี **lorebook ฉบับเรียบเรียง** 12 entries สรุป lore ของอีเวนต์ (ฉาก/เขาวงกต/Kama/Parvati/Kiara/春日局 ฯลฯ พร้อม key ทั้ง EN/JP/ไทย) เขียนจากข้อมูลสาธารณะ ไม่ใช่ข้อความเกมตรง ๆ:
+
+- `lorebook/ooku_lorebook.json` — เนื้อหาภาษาอังกฤษ
+- `lorebook/ooku_lorebook_th.json` — เนื้อหาภาษาไทย (โครงสร้าง/key เดียวกัน)
+
+รวม lorebook หลายไฟล์เป็นไฟล์เดียว (เช่น ฉบับเรียบเรียง + transcript ที่ดาวน์โหลดมา):
+
+```bash
+python fgo_dialogue.py --merge-lorebooks lorebook/ooku_lorebook.json output/NA/war9080/lorebook.json --lorebook-out lorebook/ooku_full.json
+```
 
 ## หมายเหตุ
 

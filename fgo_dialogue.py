@@ -353,6 +353,20 @@ def lorebook_from_dir(directory: Path, title: str | None):
     write_lorebook(directory / "lorebook.json", title or directory.name, sections)
 
 
+def merge_lorebooks(paths: list[Path], out_path: Path):
+    """Concatenate several lorebook JSONs, renumbering uid/displayIndex."""
+    merged: dict[str, dict] = {}
+    uid = 0
+    for path in paths:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for _, entry in sorted(data.get("entries", {}).items(), key=lambda kv: int(kv[0])):
+            merged[str(uid)] = {**entry, "uid": uid, "displayIndex": uid}
+            uid += 1
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps({"entries": merged}, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"merged {len(paths)} lorebooks → {out_path}  ({uid} entries)")
+
+
 # ------------------------------------------------------------------ API flows
 
 def iter_war_scripts(region: str, war_id: int):
@@ -452,6 +466,10 @@ def main() -> int:
     parser.add_argument("--lorebook-from", metavar="DIR",
                         help="build lorebook.json from an existing output directory")
     parser.add_argument("--lorebook-title", help="title used inside the lorebook")
+    parser.add_argument("--merge-lorebooks", metavar="FILE", nargs="+",
+                        help="merge lorebook JSON files into one")
+    parser.add_argument("--lorebook-out", default="lorebook_merged.json",
+                        help="output file for --merge-lorebooks")
     parser.add_argument("--gender", default="both", choices=["male", "female", "both"],
                         help="which protagonist-gender text variant to keep")
     parser.add_argument("--player-name", default=None, help="text used for the [%%1] placeholder")
@@ -460,6 +478,9 @@ def main() -> int:
     player = args.player_name or ("藤丸立香" if args.region == "JP" else "Ritsuka")
     renderer = Renderer(player, args.gender)
 
+    if args.merge_lorebooks:
+        merge_lorebooks([Path(p) for p in args.merge_lorebooks], Path(args.lorebook_out))
+        return 0
     if args.lorebook_from:
         lorebook_from_dir(Path(args.lorebook_from), args.lorebook_title)
         return 0
