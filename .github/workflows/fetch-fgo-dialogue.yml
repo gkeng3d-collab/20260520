@@ -1,0 +1,60 @@
+name: Fetch FGO dialogue (Atlas Academy)
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: "Game region (JP, NA, CN, TW, KR)"
+        default: "NA"
+      war_ids:
+        description: "Space-separated war ids to try, in order, for --war (first one that succeeds wins)"
+        default: "9136 9080"
+      script_id:
+        description: "Optional single script id to also fetch with --script (leave blank to skip)"
+        default: "9403356090"
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch single script
+        if: ${{ inputs.script_id != '' }}
+        run: python fgo_dialogue.py --region "${{ inputs.region }}" --script "${{ inputs.script_id }}"
+
+      - name: Fetch war (first working id wins)
+        run: |
+          set -e
+          for war in ${{ inputs.war_ids }}; do
+            echo "::group::Trying war $war"
+            if python fgo_dialogue.py --region "${{ inputs.region }}" --war "$war" --lorebook; then
+              echo "::endgroup::"
+              echo "Succeeded with war $war"
+              exit 0
+            fi
+            echo "::endgroup::"
+          done
+          echo "All war ids failed"
+          exit 1
+
+      - name: Commit and push results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add output/
+          if git diff --cached --quiet; then
+            echo "Nothing new to commit"
+          else
+            git commit -m "Fetch FGO dialogue via Atlas Academy API (automated run)"
+            git push origin HEAD:${{ github.ref_name }}
+          fi
