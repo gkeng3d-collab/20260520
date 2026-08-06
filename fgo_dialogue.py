@@ -115,9 +115,11 @@ HEX_COLOR = re.compile(r"^[0-9a-fA-F]{6}$")
 class Renderer:
     """Turn raw dialogue markup into plain readable text."""
 
-    def __init__(self, player_name: str, gender: str):
+    def __init__(self, player_name: str, gender: str, region: str = "JP"):
         self.player_name = player_name
         self.gender = gender  # male | female | both
+        self.slash = "／" if region == "JP" else "/"
+        self.paren = ("（", "）") if region == "JP" else (" (", ")")
 
     def render(self, raw: str) -> str:
         parts = [self.render_token(token) for token in split_tokens(raw)]
@@ -130,7 +132,8 @@ class Renderer:
         if token.startswith("[#"):  # ruby: [#text:reading]
             body = token[2:-1]
             text, _, ruby = body.partition(":")
-            return f"{text}（{ruby}）" if ruby else text
+            open_p, close_p = self.paren
+            return f"{text}{open_p}{ruby}{close_p}" if ruby else text
         if token.startswith("[&") and ":" in token:  # gender: [&male:female]
             male, female = (split_outside_brackets(token[2:-1], ":") + [""])[:2]
             male_text = "".join(self.render_token(t) for t in split_tokens(male))
@@ -139,7 +142,7 @@ class Renderer:
                 return male_text
             if self.gender == "female":
                 return female_text
-            return male_text if male_text == female_text else f"{male_text}／{female_text}"
+            return male_text if male_text == female_text else f"{male_text}{self.slash}{female_text}"
 
         params = token[1:-1].split()
         if not params:
@@ -157,7 +160,8 @@ class Renderer:
             fields = body.split(":")
             if len(fields) >= 3:
                 hidden, true_name = fields[1], fields[2]
-                return hidden if hidden == true_name else f"{hidden}（{true_name}）"
+                open_p, close_p = self.paren
+                return hidden if hidden == true_name else f"{hidden}{open_p}{true_name}{close_p}"
             return body
         if head in ("image", "i"):  # [image name:ruby]
             body = token[1:-1].split(":")
@@ -241,12 +245,13 @@ def parse_script(raw: str, region: str, renderer: Renderer) -> list[Block]:
     return blocks
 
 
-def format_blocks(blocks: list[Block]) -> str:
+def format_blocks(blocks: list[Block], region: str = "JP") -> str:
+    choice_label = "選択肢" if region == "JP" else "Choice"
     out = []
     for block in blocks:
         if block.kind == "choice":
             number = f"{block.choice_id}" if block.choice_id is not None else "-"
-            out.append(f"▼ 選択肢{number}： {block.text}")
+            out.append(f"▼ {choice_label} {number}: {block.text}")
         elif block.speaker:
             out.append(f"【{block.speaker}】\n{block.text}")
         else:
@@ -271,9 +276,9 @@ ST_ENTRY_DEFAULTS = {
 
 
 def speaker_keys(speaker: str) -> list[str]:
-    """'？？？（マシュ・キリエライト）' → both hidden and true names."""
-    match = re.match(r"^(.*?)（(.+?)）$", speaker)
-    names = [match.group(1), match.group(2)] if match else [speaker]
+    """'？？？（マシュ・キリエライト）' or '??? (Mash Kyrielight)' → both hidden and true names."""
+    match = re.match(r"^(.*?)[（(](.+?)[）)]$", speaker.rstrip())
+    names = [match.group(1).rstrip(), match.group(2)] if match else [speaker]
     return [n for n in names if n and n != "？？？"]
 
 
@@ -399,7 +404,7 @@ def download_war(region: str, war_id: int, out_dir: Path, renderer: Renderer,
             f"{'=' * 60}\n\n"
         )
         blocks = parse_script(raw, region, renderer)
-        body = format_blocks(blocks)
+        body = format_blocks(blocks, region)
         file_path = out_dir / f"{quest['id']}_{phase}_{script_id}.txt"
         file_path.write_text(header + body, encoding="utf-8")
         merged.append(header + body)
@@ -428,7 +433,7 @@ def download_single(region: str, script_id: str, out_dir: Path, renderer: Render
     if keep_raw:
         (out_dir / f"{script_id}.raw.txt").write_text(raw, encoding="utf-8")
     path = out_dir / f"{script_id}.txt"
-    path.write_text(format_blocks(parse_script(raw, region, renderer)), encoding="utf-8")
+    path.write_text(format_blocks(parse_script(raw, region, renderer), region), encoding="utf-8")
     print(f"→ {path}")
 
 
@@ -476,7 +481,7 @@ def main() -> int:
     args = parser.parse_args()
 
     player = args.player_name or ("藤丸立香" if args.region == "JP" else "Ritsuka")
-    renderer = Renderer(player, args.gender)
+    renderer = Renderer(player, args.gender, args.region)
 
     if args.merge_lorebooks:
         merge_lorebooks([Path(p) for p in args.merge_lorebooks], Path(args.lorebook_out))
@@ -486,7 +491,7 @@ def main() -> int:
         return 0
     if args.from_file:
         raw = Path(args.from_file).read_text(encoding="utf-8-sig")
-        print(format_blocks(parse_script(raw, args.region, renderer)), end="")
+        print(format_blocks(parse_script(raw, args.region, renderer), args.region), end="")
         return 0
     if args.search:
         search_scripts(args.region, args.search, args.war_filter, args.limit)
